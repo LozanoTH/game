@@ -71,16 +71,29 @@ function updateSun(dt) {
 // const textureLoader = new THREE.TextureLoader(); // Ya declarado arriba
 // textureLoader.crossOrigin = 'anonymous';
 
-// Usamos una textura de asfalto confiable (Base64 pequeña o URL muy estable)
-// Utilizaré una textura de roca/suelo que parece asfalto de los ejemplos de Three.js (GitHub)
-// Usar la textura local 'road.jpg' (descargada previamente)
-const roadUrl2 = 'road.jpg';
+function createRoadTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 1024;
+    const ctx = canvas.getContext('2d');
 
-const roadTexture = textureLoader.load(roadUrl2, function (tex) {
-    console.log("Road texture loaded");
-}, undefined, function (err) {
-    console.error("Road texture failed, using fallback color");
-});
+    ctx.fillStyle = '#2a2a2a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Ruido suave para simular asfalto y evitar depender de assets faltantes.
+    for (let i = 0; i < 12000; i++) {
+        const shade = 40 + Math.floor(Math.random() * 35);
+        ctx.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
+        const x = Math.random() * canvas.width;
+        const y = Math.random() * canvas.height;
+        const size = 1 + Math.random() * 2;
+        ctx.fillRect(x, y, size, size);
+    }
+
+    return new THREE.CanvasTexture(canvas);
+}
+
+const roadTexture = createRoadTexture();
 
 roadTexture.wrapS = THREE.RepeatWrapping;
 roadTexture.wrapT = THREE.RepeatWrapping;
@@ -428,7 +441,8 @@ function update() {
     // Pequeña inclinación visual al girar
     player.rotation.z = -(targetLane - currentLane) * 0.5;
 
-    enemies.forEach((car, index) => {
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const car = enemies[i];
         car.position.z += speed;
 
         // Rotación de enemigos para dar variedad
@@ -441,20 +455,21 @@ function update() {
         // Resetear enemigos si salen del mapa
         if (car.position.z > 20) {
             scene.remove(car);
-            enemies.splice(index, 1);
+            enemies.splice(i, 1);
             score++;
             document.getElementById("score").textContent = score;
         }
-    });
+    }
 
     // Mover y limpiar árboles
-    trees.forEach((tree, index) => {
+    for (let i = trees.length - 1; i >= 0; i--) {
+        const tree = trees[i];
         tree.position.z += speed; // Misma velocidad que la carretera
         if (tree.position.z > 20) {
             scene.remove(tree);
-            trees.splice(index, 1);
+            trees.splice(i, 1);
         }
-    });
+    }
 
     renderer.render(scene, camera);
 }
@@ -488,6 +503,8 @@ document.addEventListener("keydown", e => {
 
 document.getElementById("left").ontouchstart = moveLeft;
 document.getElementById("right").ontouchstart = moveRight;
+document.getElementById("left").onmousedown = moveLeft;
+document.getElementById("right").onmousedown = moveRight;
 
 window.addEventListener("resize", () => {
     camera.aspect = window.innerWidth / window.innerHeight;
