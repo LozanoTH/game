@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Mini Carrera 3D</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+      }
+    }
+    </script>
+</head>
+
+<body>
+
+    <div id="start-screen">
+        <h1 style="color:white; font-family:Arial, sans-serif; text-shadow:0 0 10px #ff0000; font-size:40px; margin:0;">
+            MINI CARRERA 3D</h1>
+        <p style="color:#aaa; font-family:Arial, sans-serif; margin-bottom:30px;">Esquiva los obstáculos</p>
+        <button id="start-btn">JUGAR</button>
+    </div>
+
+    <div id="game-over-screen" style="display:none;">
+        <h1 style="color:#ff3333; font-family:Arial, sans-serif; text-shadow:0 0 10px #000; font-size:50px; margin:0;">
+            GAME OVER</h1>
+        <p style="color:white; font-family:Arial, sans-serif; font-size:20px;">Puntuación Final: <span
+                id="final-score">0</span></p>
+        <button id="restart-btn" class="btn-primary">REINTENTAR</button>
+    </div>
+
+    <div id="ui">
+        Puntos: <span id="score">0</span><br>
+        Dificultad: <span id="difficulty">1.00x</span><br>
+        Truco: <span id="cheat-status">OFF</span><br>
+        Graficos: <span id="graphics-label">RTX PRO MAX</span><br>
+        <input id="graphics-slider" type="range" min="20" max="100" value="20" step="1">
+    </div>
+
+    <div id="controls">
+        <div class="btn" id="left">◀</div>
+        <div class="btn" id="right">▶</div>
+    </div>
+
+    <!-- Eliminar script suelto de three.js porque ahora usamos ES Modules dentro de game.js -->
+    <script type="module" src="game.js"></script>
+
+</body>
+
+</html>
