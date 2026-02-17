@@ -71,29 +71,16 @@ function updateSun(dt) {
 // const textureLoader = new THREE.TextureLoader(); // Ya declarado arriba
 // textureLoader.crossOrigin = 'anonymous';
 
-function createRoadTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 1024;
-    const ctx = canvas.getContext('2d');
+// Usamos una textura de asfalto confiable (Base64 pequeña o URL muy estable)
+// Utilizaré una textura de roca/suelo que parece asfalto de los ejemplos de Three.js (GitHub)
+// Usar la textura local 'road.jpg' (descargada previamente)
+const roadUrl2 = 'road.jpg';
 
-    ctx.fillStyle = '#2a2a2a';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Ruido suave para simular asfalto y evitar depender de assets faltantes.
-    for (let i = 0; i < 12000; i++) {
-        const shade = 40 + Math.floor(Math.random() * 35);
-        ctx.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
-        const x = Math.random() * canvas.width;
-        const y = Math.random() * canvas.height;
-        const size = 1 + Math.random() * 2;
-        ctx.fillRect(x, y, size, size);
-    }
-
-    return new THREE.CanvasTexture(canvas);
-}
-
-const roadTexture = createRoadTexture();
+const roadTexture = textureLoader.load(roadUrl2, function (tex) {
+    console.log("Road texture loaded");
+}, undefined, function (err) {
+    console.error("Road texture failed, using fallback color");
+});
 
 roadTexture.wrapS = THREE.RepeatWrapping;
 roadTexture.wrapT = THREE.RepeatWrapping;
@@ -364,97 +351,6 @@ function createCar(color) {
     return carGroup;
 }
 
-function createWreckedCar() {
-    const wreckColors = [0x5c5c5c, 0x4a2f2f, 0x3a3d52, 0x4f3d2c];
-    const carGroup = createCar(wreckColors[Math.floor(Math.random() * wreckColors.length)]);
-
-    // Aspecto de choque: inclinación, piezas oscuras y "humo" estático.
-    carGroup.rotation.set(
-        (Math.random() - 0.5) * 0.18,
-        (Math.random() - 0.5) * 0.9,
-        (Math.random() - 0.5) * 0.15
-    );
-
-    const dentGeo = new THREE.BoxGeometry(0.5, 0.15, 0.2);
-    const dentMat = new THREE.MeshStandardMaterial({ color: 0x1e1e1e, roughness: 1 });
-
-    for (let i = 0; i < 3; i++) {
-        const dent = new THREE.Mesh(dentGeo, dentMat);
-        dent.position.set((Math.random() - 0.5) * 1.0, 0.45 + Math.random() * 0.25, (Math.random() - 0.5) * 1.8);
-        dent.rotation.set(Math.random(), Math.random(), Math.random());
-        carGroup.add(dent);
-    }
-
-    return carGroup;
-}
-
-const skidParticles = [];
-const skidParticleGeo = new THREE.SphereGeometry(0.08, 6, 6);
-const skidParticleMat = new THREE.MeshBasicMaterial({ color: 0xd8d8d8, transparent: true, opacity: 0.9 });
-
-function spawnSkidParticles(direction) {
-    for (let i = 0; i < 14; i++) {
-        const particle = new THREE.Mesh(skidParticleGeo, skidParticleMat.clone());
-        particle.position.set(
-            player.position.x + direction * (0.2 + Math.random() * 0.4),
-            0.25 + Math.random() * 0.2,
-            player.position.z + 0.5 + (Math.random() - 0.5) * 0.8
-        );
-        particle.userData.vx = direction * (0.01 + Math.random() * 0.02);
-        particle.userData.vy = 0.01 + Math.random() * 0.02;
-        particle.userData.vz = 0.02 + Math.random() * 0.04;
-        particle.userData.life = 0.45 + Math.random() * 0.25;
-        scene.add(particle);
-        skidParticles.push(particle);
-    }
-}
-
-let audioCtx = null;
-
-function ensureAudioContext() {
-    if (!audioCtx) {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return null;
-        audioCtx = new AC();
-    }
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    return audioCtx;
-}
-
-function playSkidSound() {
-    const ctx = ensureAudioContext();
-    if (!ctx) return;
-
-    const duration = 0.16;
-    const now = ctx.currentTime;
-
-    const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
-    const output = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < output.length; i++) {
-        output[i] = (Math.random() * 2 - 1) * 0.45;
-    }
-
-    const source = ctx.createBufferSource();
-    source.buffer = noiseBuffer;
-
-    const band = ctx.createBiquadFilter();
-    band.type = 'bandpass';
-    band.frequency.value = 1800;
-    band.Q.value = 0.7;
-
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.11, now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-
-    source.connect(band);
-    band.connect(gain);
-    gain.connect(ctx.destination);
-
-    source.start(now);
-    source.stop(now + duration);
-}
-
 // Jugador
 let player = createCar(0xff0000);
 scene.add(player);
@@ -470,10 +366,11 @@ let isGameOver = true;
 
 function spawnEnemy() {
     if (isGameOver) return;
-    let wreckedCar = createWreckedCar();
-    wreckedCar.position.set(lanePositions[Math.floor(Math.random() * 3)], 0.0, -80);
-    scene.add(wreckedCar);
-    enemies.push(wreckedCar);
+    const colors = [0xffff00, 0x00ff00, 0x00ffff, 0xff00ff, 0x8888ff];
+    let car = createCar(colors[Math.floor(Math.random() * colors.length)]);
+    car.position.set(lanePositions[Math.floor(Math.random() * 3)], 0.0, -80);
+    scene.add(car);
+    enemies.push(car);
 }
 
 function startGame() {
@@ -490,8 +387,6 @@ function startGame() {
     enemies = [];
     trees.forEach(t => scene.remove(t));
     trees = [];
-    skidParticles.forEach(p => scene.remove(p));
-    skidParticles.length = 0;
 
     // Reiniciar posición jugador
     player.position.set(0, 0.0, 5);
@@ -533,23 +428,12 @@ function update() {
     // Pequeña inclinación visual al girar
     player.rotation.z = -(targetLane - currentLane) * 0.5;
 
-    for (let i = skidParticles.length - 1; i >= 0; i--) {
-        const particle = skidParticles[i];
-        particle.position.x += particle.userData.vx;
-        particle.position.y += particle.userData.vy;
-        particle.position.z += speed + particle.userData.vz;
-        particle.userData.life -= dt;
-        particle.material.opacity = Math.max(0, particle.userData.life * 2);
-
-        if (particle.userData.life <= 0 || particle.position.z > 20) {
-            scene.remove(particle);
-            skidParticles.splice(i, 1);
-        }
-    }
-
-    for (let i = enemies.length - 1; i >= 0; i--) {
-        const car = enemies[i];
+    enemies.forEach((car, index) => {
         car.position.z += speed;
+
+        // Rotación de enemigos para dar variedad
+        car.rotation.x += 0.01;
+        car.rotation.y += 0.01;
 
         if (car.position.distanceTo(player.position) < 1.8) {
             stopGame();
@@ -557,21 +441,20 @@ function update() {
         // Resetear enemigos si salen del mapa
         if (car.position.z > 20) {
             scene.remove(car);
-            enemies.splice(i, 1);
+            enemies.splice(index, 1);
             score++;
             document.getElementById("score").textContent = score;
         }
-    }
+    });
 
     // Mover y limpiar árboles
-    for (let i = trees.length - 1; i >= 0; i--) {
-        const tree = trees[i];
+    trees.forEach((tree, index) => {
         tree.position.z += speed; // Misma velocidad que la carretera
         if (tree.position.z > 20) {
             scene.remove(tree);
-            trees.splice(i, 1);
+            trees.splice(index, 1);
         }
-    }
+    });
 
     renderer.render(scene, camera);
 }
@@ -590,20 +473,12 @@ document.getElementById("restart-btn").addEventListener("click", startGame);
 // Cambio de carril
 function moveLeft() {
     let i = lanePositions.indexOf(targetLane);
-    if (i > 0) {
-        targetLane = lanePositions[i - 1];
-        playSkidSound();
-        spawnSkidParticles(-1);
-    }
+    if (i > 0) targetLane = lanePositions[i - 1];
 }
 
 function moveRight() {
     let i = lanePositions.indexOf(targetLane);
-    if (i < lanePositions.length - 1) {
-        targetLane = lanePositions[i + 1];
-        playSkidSound();
-        spawnSkidParticles(1);
-    }
+    if (i < lanePositions.length - 1) targetLane = lanePositions[i + 1];
 }
 
 document.addEventListener("keydown", e => {
@@ -613,8 +488,6 @@ document.addEventListener("keydown", e => {
 
 document.getElementById("left").ontouchstart = moveLeft;
 document.getElementById("right").ontouchstart = moveRight;
-document.getElementById("left").onmousedown = moveLeft;
-document.getElementById("right").onmousedown = moveRight;
 
 window.addEventListener("resize", () => {
     camera.aspect = window.innerWidth / window.innerHeight;
