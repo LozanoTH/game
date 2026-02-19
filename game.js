@@ -29,6 +29,63 @@ let bloomPass;
 let ssaoPass;
 let fxaaPass;
 let graphicsQuality = 20;
+let autoGraphicsMode = true;
+let soundEnabled = true;
+let musicEnabled = true;
+let musicVolume = 0.28;
+let carPolyMultiplier = 20;
+const playerCarColor = 0xff0000;
+const FIREBASE_DB_URL = "https://lozano-1690859356322-default-rtdb.firebaseio.com";
+const LEADERBOARD_NODE = "leaderboard_distance";
+
+function detectDeviceGraphicsQuality() {
+    const cores = navigator.hardwareConcurrency || 4;
+    const memory = navigator.deviceMemory || 4;
+    const dpr = window.devicePixelRatio || 1;
+    const maxTextureSize = renderer.capabilities.maxTextureSize || 4096;
+    const isMobile = /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+    const screenPixels = window.innerWidth * window.innerHeight;
+
+    let score = 0;
+    score += THREE.MathUtils.clamp((cores - 2) / 10, 0, 1) * 0.42;
+    score += THREE.MathUtils.clamp((memory - 2) / 14, 0, 1) * 0.33;
+    score += THREE.MathUtils.clamp((maxTextureSize - 4096) / 12288, 0, 1) * 0.25;
+
+    if (isMobile) score -= 0.08;
+    if (dpr > 2) score -= 0.1;
+    if (screenPixels > 2560 * 1440) score -= 0.08;
+
+    const normalized = THREE.MathUtils.clamp(score, 0, 1);
+    const autoQuality = Math.round(THREE.MathUtils.lerp(30, 95, normalized) / 5) * 5;
+    return THREE.MathUtils.clamp(autoQuality, 20, 100);
+}
+
+function syncGraphicsSlider() {
+    const slider = document.getElementById("graphics-slider");
+    if (!slider) return;
+    slider.value = String(Math.round(graphicsQuality));
+}
+
+function refreshGraphicsControlsState() {
+    const slider = document.getElementById("graphics-slider");
+    const autoToggle = document.getElementById("auto-graphics-toggle");
+    if (autoToggle) autoToggle.checked = autoGraphicsMode;
+    if (!slider) return;
+    slider.disabled = autoGraphicsMode;
+    slider.title = autoGraphicsMode
+        ? "Resolucion automatica segun la potencia del dispositivo"
+        : "Ajuste manual de calidad";
+}
+
+function getDetailSegments(baseSegments, multiplier, maxSegments = 320) {
+    return THREE.MathUtils.clamp(Math.round(baseSegments * multiplier), 1, maxSegments);
+}
+
+function updateCarPolyLabel() {
+    const label = document.getElementById("car-poly-label");
+    if (!label) return;
+    label.textContent = `x${Math.round(carPolyMultiplier)}`;
+}
 
 function updateGraphicsLabel(level) {
     const label = document.getElementById("graphics-label");
@@ -68,6 +125,7 @@ function applyGraphicsQuality(level) {
     }
 
     updateGraphicsLabel(graphicsQuality);
+    syncGraphicsSlider();
 }
 
 // --- CIELO Y AMBIENTE ---
@@ -650,11 +708,17 @@ for (let i = 0; i < 24; i++) {
 initRoadsideCliffs();
 
 // --- MODELADO DE COCHES 3D CON ACABADO PREMIUM (RTX) ---
-function createCar(color) {
+function createCar(color, polyMultiplier = 1) {
     const carGroup = new THREE.Group();
+    const detail = THREE.MathUtils.clamp(polyMultiplier, 1, 20);
 
     // Chasis con Pintura Metalizada (MeshPhysicalMaterial)
-    const bodyGeo = new THREE.BoxGeometry(1.2, 0.5, 2.2, 8, 4, 12);
+    const bodyGeo = new THREE.BoxGeometry(
+        1.2, 0.5, 2.2,
+        getDetailSegments(8, detail),
+        getDetailSegments(4, detail),
+        getDetailSegments(12, detail)
+    );
     const bodyMat = new THREE.MeshPhysicalMaterial({
         color: color,
         metalness: 0.7,
@@ -670,7 +734,12 @@ function createCar(color) {
     carGroup.add(body);
 
     // Cabina (Cristales reflectantes)
-    const cabinGeo = new THREE.BoxGeometry(0.9, 0.4, 1.0, 6, 3, 6);
+    const cabinGeo = new THREE.BoxGeometry(
+        0.9, 0.4, 1.0,
+        getDetailSegments(6, detail),
+        getDetailSegments(3, detail),
+        getDetailSegments(6, detail)
+    );
     const cabinMat = new THREE.MeshPhysicalMaterial({
         color: 0x111111,
         metalness: 0.9,
@@ -685,7 +754,11 @@ function createCar(color) {
     carGroup.add(cabin);
 
     // Ruedas con material gomoso
-    const wheelGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.2, 40, 3);
+    const wheelGeo = new THREE.CylinderGeometry(
+        0.25, 0.25, 0.2,
+        getDetailSegments(40, detail, 640),
+        getDetailSegments(3, detail, 40)
+    );
     const wheelMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.9 });
     const rimMat = new THREE.MeshStandardMaterial({ color: 0xb9bec8, roughness: 0.3, metalness: 0.85 });
 
@@ -702,19 +775,31 @@ function createCar(color) {
         wheel.castShadow = true;
         carGroup.add(wheel);
 
-        const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.205, 36, 2), rimMat);
+        const rim = new THREE.Mesh(new THREE.CylinderGeometry(
+            0.14, 0.14, 0.205,
+            getDetailSegments(36, detail, 640),
+            getDetailSegments(2, detail, 40)
+        ), rimMat);
         rim.rotation.z = Math.PI / 2;
         rim.position.set(pos[0], pos[1], pos[2]);
         rim.castShadow = true;
         carGroup.add(rim);
 
-        const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.21, 20, 1), wheelMat);
+        const hub = new THREE.Mesh(new THREE.CylinderGeometry(
+            0.06, 0.06, 0.21,
+            getDetailSegments(20, detail, 320),
+            getDetailSegments(1, detail, 24)
+        ), wheelMat);
         hub.rotation.z = Math.PI / 2;
         hub.position.set(pos[0], pos[1], pos[2]);
         hub.castShadow = true;
         carGroup.add(hub);
 
-        const brakeDisc = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.035, 28, 1), rimMat);
+        const brakeDisc = new THREE.Mesh(new THREE.CylinderGeometry(
+            0.18, 0.18, 0.035,
+            getDetailSegments(28, detail, 420),
+            getDetailSegments(1, detail, 24)
+        ), rimMat);
         brakeDisc.rotation.z = Math.PI / 2;
         brakeDisc.position.set(pos[0], pos[1], pos[2]);
         brakeDisc.castShadow = true;
@@ -727,7 +812,12 @@ function createCar(color) {
     });
 
     // Luces con emisiÃ³n de luz (Glow)
-    const lightGeo = new THREE.BoxGeometry(0.3, 0.15, 0.1, 3, 2, 2);
+    const lightGeo = new THREE.BoxGeometry(
+        0.3, 0.15, 0.1,
+        getDetailSegments(3, detail),
+        getDetailSegments(2, detail),
+        getDetailSegments(2, detail)
+    );
     const lightMat = new THREE.MeshStandardMaterial({
         color: 0xffffaa,
         emissive: 0xffffaa,
@@ -745,13 +835,23 @@ function createCar(color) {
     // Piezas extra para aumentar detalle visual/poligonal
     const trimMat = new THREE.MeshStandardMaterial({ color: 0x161616, roughness: 0.75, metalness: 0.25 });
 
-    const hoodGeo = new THREE.BoxGeometry(1.06, 0.12, 0.68, 4, 2, 6);
+    const hoodGeo = new THREE.BoxGeometry(
+        1.06, 0.12, 0.68,
+        getDetailSegments(4, detail),
+        getDetailSegments(2, detail),
+        getDetailSegments(6, detail)
+    );
     const hood = new THREE.Mesh(hoodGeo, bodyMat);
     hood.position.set(0, 0.67, -0.86);
     hood.castShadow = true;
     carGroup.add(hood);
 
-    const bumperGeo = new THREE.BoxGeometry(1.08, 0.18, 0.18, 4, 2, 2);
+    const bumperGeo = new THREE.BoxGeometry(
+        1.08, 0.18, 0.18,
+        getDetailSegments(4, detail),
+        getDetailSegments(2, detail),
+        getDetailSegments(2, detail)
+    );
     const frontBumper = new THREE.Mesh(bumperGeo, trimMat);
     frontBumper.position.set(0, 0.34, -1.16);
     frontBumper.castShadow = true;
@@ -762,7 +862,12 @@ function createCar(color) {
     rearBumper.castShadow = true;
     carGroup.add(rearBumper);
 
-    const sideSkirtGeo = new THREE.BoxGeometry(0.08, 0.15, 1.7, 3, 2, 6);
+    const sideSkirtGeo = new THREE.BoxGeometry(
+        0.08, 0.15, 1.7,
+        getDetailSegments(3, detail),
+        getDetailSegments(2, detail),
+        getDetailSegments(6, detail)
+    );
     const leftSkirt = new THREE.Mesh(sideSkirtGeo, trimMat);
     leftSkirt.position.set(-0.63, 0.28, 0);
     leftSkirt.castShadow = true;
@@ -773,7 +878,12 @@ function createCar(color) {
     rightSkirt.castShadow = true;
     carGroup.add(rightSkirt);
 
-    const mirrorGeo = new THREE.BoxGeometry(0.12, 0.09, 0.18, 3, 2, 3);
+    const mirrorGeo = new THREE.BoxGeometry(
+        0.12, 0.09, 0.18,
+        getDetailSegments(3, detail),
+        getDetailSegments(2, detail),
+        getDetailSegments(3, detail)
+    );
     const leftMirror = new THREE.Mesh(mirrorGeo, trimMat);
     leftMirror.position.set(-0.56, 0.76, -0.26);
     leftMirror.castShadow = true;
@@ -784,7 +894,12 @@ function createCar(color) {
     rightMirror.castShadow = true;
     carGroup.add(rightMirror);
 
-    const wheelArchGeo = new THREE.TorusGeometry(0.3, 0.03, 10, 24, Math.PI);
+    const wheelArchGeo = new THREE.TorusGeometry(
+        0.3, 0.03,
+        getDetailSegments(10, detail, 180),
+        getDetailSegments(24, detail, 440),
+        Math.PI
+    );
     const wheelArchPositions = [
         [-0.56, 0.36, 0.7, Math.PI / 2],
         [0.56, 0.36, 0.7, -Math.PI / 2],
@@ -799,8 +914,18 @@ function createCar(color) {
         carGroup.add(arch);
     });
 
-    const spoilerBaseGeo = new THREE.BoxGeometry(0.06, 0.2, 0.06, 2, 2, 2);
-    const spoilerWingGeo = new THREE.BoxGeometry(0.95, 0.05, 0.2, 6, 2, 3);
+    const spoilerBaseGeo = new THREE.BoxGeometry(
+        0.06, 0.2, 0.06,
+        getDetailSegments(2, detail),
+        getDetailSegments(2, detail),
+        getDetailSegments(2, detail)
+    );
+    const spoilerWingGeo = new THREE.BoxGeometry(
+        0.95, 0.05, 0.2,
+        getDetailSegments(6, detail),
+        getDetailSegments(2, detail),
+        getDetailSegments(3, detail)
+    );
     const spoilerLeft = new THREE.Mesh(spoilerBaseGeo, trimMat);
     spoilerLeft.position.set(-0.3, 0.86, 0.97);
     spoilerLeft.castShadow = true;
@@ -814,7 +939,11 @@ function createCar(color) {
     spoilerWing.castShadow = true;
     carGroup.add(spoilerWing);
 
-    const exhaustGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.18, 18, 1);
+    const exhaustGeo = new THREE.CylinderGeometry(
+        0.04, 0.04, 0.18,
+        getDetailSegments(18, detail, 280),
+        getDetailSegments(1, detail, 24)
+    );
     const exhaustL = new THREE.Mesh(exhaustGeo, trimMat);
     exhaustL.rotation.x = Math.PI / 2;
     exhaustL.position.set(-0.23, 0.2, 1.2);
@@ -827,7 +956,12 @@ function createCar(color) {
     carGroup.add(exhaustR);
 
     const grilleMat = new THREE.MeshStandardMaterial({ color: 0x0b0b0b, roughness: 0.55, metalness: 0.4 });
-    const grilleSlatGeo = new THREE.BoxGeometry(0.95, 0.02, 0.02, 4, 1, 1);
+    const grilleSlatGeo = new THREE.BoxGeometry(
+        0.95, 0.02, 0.02,
+        getDetailSegments(4, detail),
+        getDetailSegments(1, detail),
+        getDetailSegments(1, detail)
+    );
     for (let i = 0; i < 6; i++) {
         const slat = new THREE.Mesh(grilleSlatGeo, grilleMat);
         slat.position.set(0, 0.39 + i * 0.03, -1.16);
@@ -835,11 +969,19 @@ function createCar(color) {
         carGroup.add(slat);
     }
 
-    const roofAntenna = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.22, 10, 1), trimMat);
+    const roofAntenna = new THREE.Mesh(new THREE.CylinderGeometry(
+        0.008, 0.008, 0.22,
+        getDetailSegments(10, detail, 140),
+        getDetailSegments(1, detail, 24)
+    ), trimMat);
     roofAntenna.position.set(0.12, 1.04, 0.1);
     roofAntenna.castShadow = true;
     carGroup.add(roofAntenna);
-    const antennaTip = new THREE.Mesh(new THREE.SphereGeometry(0.018, 10, 8), rimMat);
+    const antennaTip = new THREE.Mesh(new THREE.SphereGeometry(
+        0.018,
+        getDetailSegments(10, detail, 180),
+        getDetailSegments(8, detail, 140)
+    ), rimMat);
     antennaTip.position.set(0.12, 1.16, 0.1);
     antennaTip.castShadow = true;
     carGroup.add(antennaTip);
@@ -849,7 +991,7 @@ function createCar(color) {
 
 function createWreckedCar() {
     const wreckColors = [0x5c5c5c, 0x4a2f2f, 0x3a3d52, 0x4f3d2c];
-    const carGroup = createCar(wreckColors[Math.floor(Math.random() * wreckColors.length)]);
+    const carGroup = createCar(wreckColors[Math.floor(Math.random() * wreckColors.length)], 1);
 
     // Aspecto de choque: inclinaciÃ³n, piezas oscuras y "humo" estÃ¡tico.
     carGroup.rotation.set(
@@ -915,18 +1057,170 @@ function spawnSkidParticles(direction) {
 }
 
 let audioCtx = null;
+let musicMasterGain = null;
+let musicPlaylist = [];
+let activeMusicAudio = null;
+const musicState = {
+    isRunning: false,
+    timerId: null,
+    currentTrackIndex: 0,
+    noteIndex: 0,
+    nextNoteTime: 0
+};
+
+const musicTracks = [
+    {
+        tempo: 108,
+        notes: [
+            [52, 1], [55, 1], [59, 1], [64, 1],
+            [59, 1], [55, 1], [52, 1], [47, 1],
+            [52, 1], [55, 1], [59, 1], [62, 1],
+            [59, 1], [55, 1], [52, 2]
+        ]
+    },
+    {
+        tempo: 124,
+        notes: [
+            [57, 0.5], [59, 0.5], [62, 1], [64, 1],
+            [62, 0.5], [59, 0.5], [57, 1], [54, 1],
+            [57, 0.5], [59, 0.5], [62, 1], [66, 1],
+            [64, 0.5], [62, 0.5], [59, 1], [57, 1]
+        ]
+    }
+];
+
+function midiToFrequency(midiNote) {
+    return 440 * Math.pow(2, (midiNote - 69) / 12);
+}
+
+async function loadMusicPlaylist() {
+    try {
+        const response = await fetch("music.json", { method: "GET" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const json = await response.json();
+        const tracks = Array.isArray(json?.tracks) ? json.tracks : [];
+        musicPlaylist = tracks
+            .map((track) => String(track?.url || "").trim())
+            .filter((url) => url.length > 0);
+    } catch (error) {
+        console.warn("No se pudo cargar music.json, se usara musica interna:", error);
+        musicPlaylist = [];
+    }
+}
 
 function ensureAudioContext() {
     if (!audioCtx) {
         const AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) return null;
         audioCtx = new AC();
+        musicMasterGain = audioCtx.createGain();
+        musicMasterGain.gain.value = musicVolume;
+        musicMasterGain.connect(audioCtx.destination);
     }
     if (audioCtx.state === 'suspended') audioCtx.resume();
     return audioCtx;
 }
 
+function setMusicVolume(value) {
+    musicVolume = THREE.MathUtils.clamp(value, 0, 1);
+    if (activeMusicAudio) activeMusicAudio.volume = musicVolume;
+    if (musicMasterGain && audioCtx) {
+        musicMasterGain.gain.setTargetAtTime(musicVolume, audioCtx.currentTime, 0.05);
+    }
+}
+
+function playExternalTrack(index) {
+    if (!musicPlaylist.length) return;
+    const safeIndex = ((index % musicPlaylist.length) + musicPlaylist.length) % musicPlaylist.length;
+    musicState.currentTrackIndex = safeIndex;
+
+    if (activeMusicAudio) {
+        activeMusicAudio.pause();
+        activeMusicAudio.src = "";
+        activeMusicAudio = null;
+    }
+
+    const audio = new Audio(musicPlaylist[safeIndex]);
+    audio.preload = "auto";
+    audio.volume = musicVolume;
+    audio.onended = () => {
+        if (!musicEnabled || !musicState.isRunning) return;
+        playExternalTrack(musicState.currentTrackIndex + 1);
+    };
+    audio.onerror = () => {
+        if (!musicEnabled || !musicState.isRunning) return;
+        playExternalTrack(musicState.currentTrackIndex + 1);
+    };
+    activeMusicAudio = audio;
+    audio.play().catch(() => {
+        // Ignorar autoplay block: en este juego vuelve a intentar en siguiente interaccion.
+    });
+}
+
+function scheduleMusicNote(note, startTime, durationSeconds) {
+    if (!audioCtx || !musicMasterGain) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "triangle";
+    osc.frequency.value = midiToFrequency(note);
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.02, musicVolume * 0.45), startTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + durationSeconds * 0.95);
+    osc.connect(gain);
+    gain.connect(musicMasterGain);
+    osc.start(startTime);
+    osc.stop(startTime + durationSeconds);
+}
+
+function musicSchedulerTick() {
+    if (!audioCtx || !musicState.isRunning || !musicEnabled) return;
+    const lookAhead = 0.35;
+    while (musicState.nextNoteTime < audioCtx.currentTime + lookAhead) {
+        const track = musicTracks[musicState.currentTrackIndex];
+        const [midi, beatLen] = track.notes[musicState.noteIndex];
+        const quarter = 60 / track.tempo;
+        const noteDuration = quarter * beatLen;
+        scheduleMusicNote(midi, musicState.nextNoteTime, noteDuration);
+        musicState.nextNoteTime += noteDuration;
+        musicState.noteIndex += 1;
+        if (musicState.noteIndex >= track.notes.length) {
+            musicState.noteIndex = 0;
+            musicState.currentTrackIndex = (musicState.currentTrackIndex + 1) % musicTracks.length;
+        }
+    }
+}
+
+function startBackgroundMusic() {
+    if (!musicEnabled || musicState.isRunning) return;
+    musicState.isRunning = true;
+    setMusicVolume(musicVolume);
+
+    if (musicPlaylist.length > 0) {
+        playExternalTrack(musicState.currentTrackIndex);
+        return;
+    }
+
+    const ctx = ensureAudioContext();
+    if (!ctx || !musicMasterGain) return;
+    musicState.nextNoteTime = ctx.currentTime + 0.05;
+    musicState.timerId = setInterval(musicSchedulerTick, 80);
+}
+
+function stopBackgroundMusic() {
+    musicState.isRunning = false;
+    if (activeMusicAudio) {
+        activeMusicAudio.pause();
+        activeMusicAudio.src = "";
+        activeMusicAudio = null;
+    }
+    if (musicState.timerId) {
+        clearInterval(musicState.timerId);
+        musicState.timerId = null;
+    }
+}
+
 function playSkidSound() {
+    if (!soundEnabled) return;
     const ctx = ensureAudioContext();
     if (!ctx) return;
 
@@ -960,9 +1254,24 @@ function playSkidSound() {
     source.stop(now + duration);
 }
 
+function rebuildPlayerCar() {
+    const oldPlayer = player;
+    const newPlayer = createCar(playerCarColor, carPolyMultiplier);
+    if (oldPlayer) {
+        newPlayer.position.copy(oldPlayer.position);
+        newPlayer.rotation.copy(oldPlayer.rotation);
+        scene.remove(oldPlayer);
+    } else {
+        // Evita depender de variables de dificultad aun no inicializadas.
+        newPlayer.position.set(0, 0, 5);
+    }
+    scene.add(newPlayer);
+    player = newPlayer;
+}
+
 // Jugador
-let player = createCar(0xff0000);
-scene.add(player);
+let player = null;
+rebuildPlayerCar();
 
 let targetLane = 0;          // carril objetivo (-3, 0, 3)
 let currentLane = 0;         // posiciÃ³n actual interpolada
@@ -981,6 +1290,15 @@ let currentDifficulty = 1;
 let enemySpawnTimer = 0;
 let treeSpawnTimer = 0;
 let propSpawnTimer = 0;
+let runDistanceSaved = false;
+let leaderboardStatusEl = null;
+let leaderboardBodyEl = null;
+let hudLeaderboardBodyEl = null;
+let playerNameInput = null;
+let nameRequiredMsgEl = null;
+let playerNameLocked = false;
+let leaderboardStream = null;
+let leaderboardPollingTimer = null;
 const baseSpeed = 0.5;
 const minEnemySpawnInterval = 0.25;
 const maxEnemySpawnInterval = 1.4;
@@ -1009,6 +1327,192 @@ function handleCheatInput(key) {
     if (cheatBuffer.includes("inmortal")) {
         toggleImmortality();
         cheatBuffer = "";
+    }
+}
+
+function getPlayerName() {
+    const raw = (playerNameInput?.value || "").trim();
+    return raw.slice(0, 16);
+}
+
+function getPlayerNameKey(name) {
+    return name
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9_-]/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 24) || "jugador";
+}
+
+function hasValidPlayerName() {
+    return getPlayerName().length > 0;
+}
+
+function applyPlayerNameLockState() {
+    if (!playerNameInput) return;
+    playerNameInput.disabled = playerNameLocked;
+    playerNameInput.title = playerNameLocked
+        ? "El nombre ya fue definido y no se puede cambiar."
+        : "Puedes cambiar el nombre una sola vez.";
+}
+
+function lockPlayerName() {
+    playerNameLocked = true;
+    localStorage.setItem("player_name_locked", "true");
+    applyPlayerNameLockState();
+}
+
+function setNameRequiredMessage(visible, message = "Ingresa un usuario en el menu para iniciar.") {
+    if (!nameRequiredMsgEl) return;
+    nameRequiredMsgEl.textContent = message;
+    nameRequiredMsgEl.classList.toggle("show", visible);
+}
+
+function setLeaderboardStatus(text) {
+    if (!leaderboardStatusEl) return;
+    leaderboardStatusEl.textContent = text;
+}
+
+function renderLeaderboardRows(entries) {
+    const targets = [leaderboardBodyEl, hudLeaderboardBodyEl].filter(Boolean);
+    if (!targets.length) return;
+
+    targets.forEach((target) => {
+        target.innerHTML = "";
+        if (!entries.length) {
+            const row = document.createElement("tr");
+            row.innerHTML = "<td colspan=\"3\">Sin datos aun</td>";
+            target.appendChild(row);
+            return;
+        }
+
+        entries.forEach((entry, index) => {
+            const row = document.createElement("tr");
+            const name = String(entry.name || "Jugador").slice(0, 16);
+            const distance = Number(entry.distance || 0);
+            row.innerHTML = `<td>${index + 1}</td><td>${name}</td><td>${distance}</td>`;
+            target.appendChild(row);
+        });
+    });
+}
+
+async function loadLeaderboard() {
+    try {
+        setLeaderboardStatus("Cargando tabla...");
+        const url = `${FIREBASE_DB_URL}/${LEADERBOARD_NODE}.json`;
+        const response = await fetch(url, { method: "GET" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        const rows = Object.values(data || {}).filter((item) =>
+            item && typeof item === "object" && item.name != null && item.distance != null
+        );
+
+        // Deduplica por usuario para evitar miles de entradas repetidas del mismo nombre.
+        const bestByUser = new Map();
+        for (const row of rows) {
+            const name = String(row.name || "Jugador").slice(0, 16);
+            const nameKey = getPlayerNameKey(name);
+            const distance = Number(row.distance || 0);
+            const score = Number(row.score || 0);
+            const createdAt = Number(row.createdAt || 0);
+            const candidate = { name, distance, score, createdAt };
+            const prev = bestByUser.get(nameKey);
+            if (!prev || candidate.distance > prev.distance || (candidate.distance === prev.distance && candidate.createdAt > prev.createdAt)) {
+                bestByUser.set(nameKey, candidate);
+            }
+        }
+
+        const top = Array.from(bestByUser.values())
+            .sort((a, b) => Number(b.distance || 0) - Number(a.distance || 0))
+            .slice(0, 10);
+        renderLeaderboardRows(top);
+        setLeaderboardStatus(top.length ? "Top 10 global" : "Sin registros");
+    } catch (error) {
+        console.error("No se pudo cargar la tabla:", error);
+        setLeaderboardStatus("No se pudo cargar la tabla");
+        renderLeaderboardRows([]);
+    }
+}
+
+function stopLeaderboardRealtime() {
+    if (leaderboardStream) {
+        leaderboardStream.close();
+        leaderboardStream = null;
+    }
+    if (leaderboardPollingTimer) {
+        clearInterval(leaderboardPollingTimer);
+        leaderboardPollingTimer = null;
+    }
+}
+
+function startLeaderboardPolling() {
+    if (leaderboardPollingTimer) return;
+    leaderboardPollingTimer = setInterval(() => {
+        loadLeaderboard();
+    }, 7000);
+}
+
+function startLeaderboardRealtime() {
+    stopLeaderboardRealtime();
+    const streamUrl = `${FIREBASE_DB_URL}/${LEADERBOARD_NODE}.json`;
+
+    try {
+        leaderboardStream = new EventSource(streamUrl);
+    } catch (error) {
+        console.warn("EventSource no disponible, usando polling:", error);
+        startLeaderboardPolling();
+        return;
+    }
+
+    const refresh = () => loadLeaderboard();
+    leaderboardStream.addEventListener("put", refresh);
+    leaderboardStream.addEventListener("patch", refresh);
+    leaderboardStream.onerror = () => {
+        if (leaderboardStream) {
+            leaderboardStream.close();
+            leaderboardStream = null;
+        }
+        startLeaderboardPolling();
+    };
+}
+
+async function saveRunDistance(distance, runScore) {
+    try {
+        const playerName = getPlayerName() || "Jugador";
+        const playerKey = getPlayerNameKey(playerName);
+        const entryUrl = `${FIREBASE_DB_URL}/${LEADERBOARD_NODE}/${playerKey}.json`;
+        const currentResponse = await fetch(entryUrl, { method: "GET" });
+        if (!currentResponse.ok) throw new Error(`HTTP ${currentResponse.status}`);
+        const currentEntry = await currentResponse.json();
+
+        const nextDistance = Math.max(0, Math.floor(distance));
+        const nextScore = Math.max(0, Math.floor(runScore));
+        const currentDistance = Number(currentEntry?.distance || 0);
+        if (currentEntry && nextDistance <= currentDistance) {
+            setLeaderboardStatus("No superaste tu mejor distancia");
+            await loadLeaderboard();
+            return;
+        }
+
+        const payload = {
+            name: playerName,
+            distance: nextDistance,
+            score: nextScore,
+            createdAt: Date.now()
+        };
+        const response = await fetch(entryUrl, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        setLeaderboardStatus("Guardado");
+        await loadLeaderboard();
+    } catch (error) {
+        console.error("No se pudo guardar distancia:", error);
+        setLeaderboardStatus("Error guardando datos");
     }
 }
 
@@ -1067,6 +1571,17 @@ function spawnEnemy() {
 }
 
 function startGame() {
+    if (!hasValidPlayerName()) {
+        setNameRequiredMessage(true);
+        setMenuOpen(true);
+        return;
+    }
+    if (!playerNameLocked) {
+        localStorage.setItem("player_name", getPlayerName());
+        lockPlayerName();
+    }
+    setNameRequiredMessage(false);
+    startBackgroundMusic();
     isGameOver = false;
     clock = new THREE.Clock(); // Resetear reloj para evitar saltos temporales
     document.getElementById("start-screen").style.display = "none";
@@ -1076,6 +1591,7 @@ function startGame() {
     elapsedGameTime = 0;
     worldDistance = 0;
     currentDifficulty = 1;
+    runDistanceSaved = false;
     enemySpawnTimer = 0.2;
     treeSpawnTimer = 0.05;
     propSpawnTimer = 0.25;
@@ -1135,6 +1651,10 @@ function stopGame() {
     isGameOver = true;
     document.getElementById("game-over-screen").style.display = "flex";
     document.getElementById("final-score").textContent = score;
+    if (!runDistanceSaved) {
+        runDistanceSaved = true;
+        saveRunDistance(worldDistance, score);
+    }
 }
 
 function update() {
@@ -1394,6 +1914,22 @@ document.addEventListener("keydown", e => {
 
 const leftBtn = document.getElementById("left");
 const rightBtn = document.getElementById("right");
+const menuToggleBtn = document.getElementById("menu-toggle");
+const menuCloseBtn = document.getElementById("menu-close");
+const menuOverlay = document.getElementById("menu-overlay");
+const sideMenu = document.getElementById("side-menu");
+const touchControlsToggle = document.getElementById("touch-controls-toggle");
+const soundToggle = document.getElementById("sound-toggle");
+const musicToggle = document.getElementById("music-toggle");
+const musicVolumeSlider = document.getElementById("music-volume-slider");
+const menuRestartBtn = document.getElementById("menu-restart-btn");
+const autoGraphicsToggle = document.getElementById("auto-graphics-toggle");
+const carPolySlider = document.getElementById("car-poly-slider");
+playerNameInput = document.getElementById("player-name");
+nameRequiredMsgEl = document.getElementById("name-required-msg");
+leaderboardStatusEl = document.getElementById("leaderboard-status");
+leaderboardBodyEl = document.getElementById("leaderboard-body");
+hudLeaderboardBodyEl = document.getElementById("hud-leaderboard-body");
 
 function bindControlButton(button, moveFn) {
     button.addEventListener("touchstart", (event) => {
@@ -1408,13 +1944,129 @@ function bindControlButton(button, moveFn) {
 bindControlButton(leftBtn, moveLeft);
 bindControlButton(rightBtn, moveRight);
 
+function setMenuOpen(open) {
+    if (!sideMenu || !menuOverlay || !menuToggleBtn) return;
+    sideMenu.classList.toggle("is-open", open);
+    menuOverlay.classList.toggle("is-open", open);
+    sideMenu.setAttribute("aria-hidden", open ? "false" : "true");
+    menuToggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+if (menuToggleBtn) {
+    menuToggleBtn.addEventListener("click", () => {
+        const isOpen = sideMenu?.classList.contains("is-open");
+        setMenuOpen(!isOpen);
+    });
+}
+
+if (menuCloseBtn) menuCloseBtn.addEventListener("click", () => setMenuOpen(false));
+if (menuOverlay) menuOverlay.addEventListener("click", () => setMenuOpen(false));
+
+document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") setMenuOpen(false);
+});
+
+function setTouchControlsVisible(visible) {
+    document.body.classList.toggle("controls-hidden", !visible);
+    if (touchControlsToggle) touchControlsToggle.checked = visible;
+}
+
+if (touchControlsToggle) {
+    touchControlsToggle.addEventListener("change", () => {
+        setTouchControlsVisible(touchControlsToggle.checked);
+    });
+    setTouchControlsVisible(touchControlsToggle.checked);
+}
+
+if (soundToggle) {
+    soundEnabled = soundToggle.checked;
+    soundToggle.addEventListener("change", () => {
+        soundEnabled = soundToggle.checked;
+    });
+}
+
+if (musicToggle) {
+    const savedMusic = localStorage.getItem("music_enabled");
+    if (savedMusic !== null) {
+        musicEnabled = savedMusic === "true";
+        musicToggle.checked = musicEnabled;
+    } else {
+        musicEnabled = musicToggle.checked;
+    }
+
+    musicToggle.addEventListener("change", () => {
+        musicEnabled = musicToggle.checked;
+        localStorage.setItem("music_enabled", String(musicEnabled));
+        if (musicEnabled) {
+            startBackgroundMusic();
+        } else {
+            stopBackgroundMusic();
+        }
+    });
+}
+
+if (musicVolumeSlider) {
+    const savedVolume = Number(localStorage.getItem("music_volume"));
+    if (Number.isFinite(savedVolume)) {
+        musicVolume = THREE.MathUtils.clamp(savedVolume, 0, 1);
+    }
+    musicVolumeSlider.value = String(Math.round(musicVolume * 100));
+    setMusicVolume(musicVolume);
+    musicVolumeSlider.addEventListener("input", () => {
+        const normalized = Number(musicVolumeSlider.value) / 100;
+        setMusicVolume(normalized);
+        localStorage.setItem("music_volume", String(musicVolume));
+    });
+}
+
+if (carPolySlider) {
+    carPolySlider.value = String(Math.round(carPolyMultiplier));
+    updateCarPolyLabel();
+    carPolySlider.addEventListener("input", () => {
+        carPolyMultiplier = THREE.MathUtils.clamp(Number(carPolySlider.value), 1, 20);
+        updateCarPolyLabel();
+        rebuildPlayerCar();
+    });
+} else {
+    updateCarPolyLabel();
+}
+
+if (playerNameInput) {
+    const savedName = localStorage.getItem("player_name") || "";
+    if (savedName) playerNameInput.value = savedName.slice(0, 16);
+    playerNameLocked = localStorage.getItem("player_name_locked") === "true" && savedName.trim().length > 0;
+    applyPlayerNameLockState();
+
+    if (!playerNameLocked) {
+        playerNameInput.addEventListener("input", () => {
+            const sanitized = playerNameInput.value.trim().slice(0, 16);
+            playerNameInput.value = sanitized;
+            localStorage.setItem("player_name", sanitized);
+            if (sanitized.length > 0) setNameRequiredMessage(false);
+        });
+    }
+}
+
+loadLeaderboard();
+startLeaderboardRealtime();
+loadMusicPlaylist();
+window.addEventListener("beforeunload", () => {
+    stopLeaderboardRealtime();
+    stopBackgroundMusic();
+});
+
+if (menuRestartBtn) {
+    menuRestartBtn.addEventListener("click", () => {
+        startGame();
+        setMenuOpen(false);
+    });
+}
+
 const graphicsSlider = document.getElementById("graphics-slider");
 if (graphicsSlider) {
-    graphicsSlider.value = String(graphicsQuality);
-    updateGraphicsLabel(graphicsQuality);
     graphicsSlider.addEventListener("input", () => {
-        const level = Number(graphicsSlider.value);
-        applyGraphicsQuality(level);
+        if (autoGraphicsMode) return;
+        applyGraphicsQuality(Number(graphicsSlider.value));
         const w = window.innerWidth;
         const h = window.innerHeight;
         const px = renderer.getPixelRatio();
@@ -1422,6 +2074,19 @@ if (graphicsSlider) {
         if (ssaoPass) ssaoPass.setSize(w, h);
         if (bloomPass) bloomPass.setSize(w, h);
         if (fxaaPass) fxaaPass.material.uniforms['resolution'].value.set(1 / (w * px), 1 / (h * px));
+    });
+}
+
+if (autoGraphicsToggle) {
+    autoGraphicsToggle.checked = autoGraphicsMode;
+    autoGraphicsToggle.addEventListener("change", () => {
+        autoGraphicsMode = autoGraphicsToggle.checked;
+        if (autoGraphicsMode) {
+            applyGraphicsQuality(detectDeviceGraphicsQuality());
+        } else if (graphicsSlider) {
+            applyGraphicsQuality(Number(graphicsSlider.value));
+        }
+        refreshGraphicsControlsState();
     });
 }
 
@@ -1436,11 +2101,17 @@ window.addEventListener("resize", () => {
     if (ssaoPass) ssaoPass.setSize(w, h);
     if (bloomPass) bloomPass.setSize(w, h);
     if (fxaaPass) fxaaPass.material.uniforms['resolution'].value.set(1 / (w * px), 1 / (h * px));
-    applyGraphicsQuality(graphicsQuality);
+    if (autoGraphicsMode) {
+        applyGraphicsQuality(detectDeviceGraphicsQuality());
+    } else {
+        applyGraphicsQuality(graphicsQuality);
+    }
 });
 
 // Iniciar bucle de renderizado (se mantendrÃ¡ en 'isGameOver=true' hasta pulsar JUGAR)
+if (autoGraphicsMode) {
+    applyGraphicsQuality(detectDeviceGraphicsQuality());
+}
+refreshGraphicsControlsState();
 update();
-
-
 
