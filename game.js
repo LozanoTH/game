@@ -1,2117 +1,568 @@
-﻿import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+﻿import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+import { createInputController } from "./input-controller.js";
+import { ThirdPersonCameraController } from "./camera-controller.js";
+import { CharacterMovementController } from "./character-movement-controller.js";
+import { CharacterAnimationController } from "./character-animation-controller.js";
+import { createCharacter } from "./character-factory.js";
+import { InfiniteTerrainChunks } from "./terrain-chunk-manager.js";
 
-import { EffectComposer } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { SSAOPass } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/SSAOPass.js';
-import { ShaderPass } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/ShaderPass.js';
-import { FXAAShader } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/FXAAShader.js';
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x04060b);
+scene.fog = new THREE.Fog(0x0b0f17, 180, 1200);
 
-let scene = new THREE.Scene();
-// scene.fog se gestiona en updateSun ahora
-
-let camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 280);
-camera.position.set(0, 5, 10);
-camera.lookAt(0, 0, 0);
-const baseCameraFov = 75;
-const maxCameraFov = 95;
-
-let renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.08;
-document.body.appendChild(renderer.domElement);
-
-let composer;
-let bloomPass;
-let ssaoPass;
-let fxaaPass;
-let graphicsQuality = 20;
-let autoGraphicsMode = true;
-let soundEnabled = true;
-let musicEnabled = true;
-let musicVolume = 0.28;
-let carPolyMultiplier = 20;
-const playerCarColor = 0xff0000;
-const FIREBASE_DB_URL = "https://lozano-1690859356322-default-rtdb.firebaseio.com";
-const LEADERBOARD_NODE = "leaderboard_distance";
-
-function detectDeviceGraphicsQuality() {
-    const cores = navigator.hardwareConcurrency || 4;
-    const memory = navigator.deviceMemory || 4;
-    const dpr = window.devicePixelRatio || 1;
-    const maxTextureSize = renderer.capabilities.maxTextureSize || 4096;
-    const isMobile = /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
-    const screenPixels = window.innerWidth * window.innerHeight;
-
-    let score = 0;
-    score += THREE.MathUtils.clamp((cores - 2) / 10, 0, 1) * 0.42;
-    score += THREE.MathUtils.clamp((memory - 2) / 14, 0, 1) * 0.33;
-    score += THREE.MathUtils.clamp((maxTextureSize - 4096) / 12288, 0, 1) * 0.25;
-
-    if (isMobile) score -= 0.08;
-    if (dpr > 2) score -= 0.1;
-    if (screenPixels > 2560 * 1440) score -= 0.08;
-
-    const normalized = THREE.MathUtils.clamp(score, 0, 1);
-    const autoQuality = Math.round(THREE.MathUtils.lerp(30, 95, normalized) / 5) * 5;
-    return THREE.MathUtils.clamp(autoQuality, 20, 100);
-}
-
-function syncGraphicsSlider() {
-    const slider = document.getElementById("graphics-slider");
-    if (!slider) return;
-    slider.value = String(Math.round(graphicsQuality));
-}
-
-function refreshGraphicsControlsState() {
-    const slider = document.getElementById("graphics-slider");
-    const autoToggle = document.getElementById("auto-graphics-toggle");
-    if (autoToggle) autoToggle.checked = autoGraphicsMode;
-    if (!slider) return;
-    slider.disabled = autoGraphicsMode;
-    slider.title = autoGraphicsMode
-        ? "Resolucion automatica segun la potencia del dispositivo"
-        : "Ajuste manual de calidad";
-}
-
-function getDetailSegments(baseSegments, multiplier, maxSegments = 320) {
-    return THREE.MathUtils.clamp(Math.round(baseSegments * multiplier), 1, maxSegments);
-}
-
-function updateCarPolyLabel() {
-    const label = document.getElementById("car-poly-label");
-    if (!label) return;
-    label.textContent = `x${Math.round(carPolyMultiplier)}`;
-}
-
-function updateGraphicsLabel(level) {
-    const label = document.getElementById("graphics-label");
-    if (!label) return;
-    if (level >= 95) label.textContent = "RTX PRO MAX";
-    else if (level >= 80) label.textContent = "Ultra";
-    else if (level >= 60) label.textContent = "Alto";
-    else if (level >= 40) label.textContent = "Medio";
-    else label.textContent = "Bajo";
-}
-
-function applyGraphicsQuality(level) {
-    graphicsQuality = THREE.MathUtils.clamp(level, 20, 100);
-    const t = (graphicsQuality - 20) / 80; // 0..1
-
-    const pixelRatio = THREE.MathUtils.lerp(0.9, 2.0, t);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pixelRatio));
-    renderer.toneMappingExposure = THREE.MathUtils.lerp(0.98, 1.14, t);
-
-    const shadowSize = t > 0.8 ? 4096 : (t > 0.45 ? 2048 : 1024);
-    dirLight.shadow.mapSize.width = shadowSize;
-    dirLight.shadow.mapSize.height = shadowSize;
-    if (dirLight.shadow.map) dirLight.shadow.map.dispose();
-
-    if (ssaoPass) {
-        ssaoPass.enabled = graphicsQuality >= 35;
-        ssaoPass.kernelRadius = THREE.MathUtils.lerp(6, 14, t);
-        ssaoPass.minDistance = THREE.MathUtils.lerp(0.006, 0.002, t);
-        ssaoPass.maxDistance = THREE.MathUtils.lerp(0.18, 0.26, t);
-    }
-
-    if (bloomPass) {
-        bloomPass.enabled = true;
-        bloomPass.strength = THREE.MathUtils.lerp(0.14, 0.42, t);
-        bloomPass.radius = THREE.MathUtils.lerp(0.35, 0.9, t);
-        bloomPass.threshold = THREE.MathUtils.lerp(1.05, 0.82, t);
-    }
-
-    updateGraphicsLabel(graphicsQuality);
-    syncGraphicsSlider();
-}
-
-// --- CIELO Y AMBIENTE ---
-// --- CIELO Y AMBIENTE ---
 const textureLoader = new THREE.TextureLoader();
-textureLoader.crossOrigin = 'anonymous';
-// Cargar textura local del cielo desde la carpeta 'texture'
-const skyTexture = textureLoader.load('texture/cielo.png');
-
-const skyGeo = new THREE.SphereGeometry(500, 32, 32);
-const skyMat = new THREE.MeshBasicMaterial({
-    map: skyTexture,
-    side: THREE.BackSide
-});
-const sky = new THREE.Mesh(skyGeo, skyMat);
-scene.add(sky);
-
-// Permitir que el cielo actÃºe como mapa de reflexiÃ³n ambiental (RTX feel)
-skyTexture.mapping = THREE.EquirectangularReflectionMapping;
-scene.environment = skyTexture;
-
-// Luz ambiental
-const ambientLight = new THREE.AmbientLight(0x404040, 2);
-scene.add(ambientLight);
-
-// Luz Direccional
-let dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-dirLight.position.set(-50, 100, 50);
-dirLight.castShadow = true;
-scene.add(dirLight);
-
-// Niebla ajustada
-scene.fog = new THREE.Fog(0x88aabb, 20, 200);
-
-// ConfiguraciÃ³n de Sombras de "Alta Calidad" (RTX feel)
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Sombras suaves
-dirLight.shadow.mapSize.width = 2048;
-dirLight.shadow.mapSize.height = 2048;
-dirLight.shadow.camera.left = -20;
-dirLight.shadow.camera.right = 20;
-dirLight.shadow.camera.top = 20;
-dirLight.shadow.camera.bottom = -20;
-dirLight.shadow.bias = -0.00025;
-dirLight.shadow.normalBias = 0.02;
-
-// Luz HemisfÃ©rica para colores mÃ¡s naturales
-const hemiLight = new THREE.HemisphereLight(0x88aabb, 0x443333, 0.6);
-scene.add(hemiLight);
-
-// Sol y luna para ciclo dia/noche
-const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xfff0b3, transparent: true, opacity: 1 });
-const moonMaterial = new THREE.MeshBasicMaterial({ color: 0xcfd8ff, transparent: true, opacity: 1 });
-const sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 20, 20), sunMaterial);
-const moon = new THREE.Mesh(new THREE.SphereGeometry(2.6, 16, 16), moonMaterial);
-scene.add(sun);
-scene.add(moon);
-
-// Variables de tiempo
-let time = 0;
-const dayDuration = 240;
-let clock = new THREE.Clock();
-
-const daySkyColor = new THREE.Color(0x8dcfff);
-const duskSkyColor = new THREE.Color(0xffa366);
-const nightSkyColor = new THREE.Color(0x0b1026);
-const dayHemiSky = new THREE.Color(0xbadfff);
-const nightHemiSky = new THREE.Color(0x1b2550);
-const dayHemiGround = new THREE.Color(0x4a3a28);
-const nightHemiGround = new THREE.Color(0x0f1018);
-const daySunColor = new THREE.Color(0xffffff);
-const nightSunColor = new THREE.Color(0x7f8bb2);
-const tmpColorA = new THREE.Color();
-const tmpColorB = new THREE.Color();
-
-function smoothstep(edge0, edge1, x) {
-    const t = THREE.MathUtils.clamp((x - edge0) / (edge1 - edge0), 0, 1);
-    return t * t * (3 - 2 * t);
-}
-
-function updateSun(dt) {
-    time = (time + dt) % dayDuration;
-    const phase = time / dayDuration;
-    const angle = phase * Math.PI * 2;
-    const sunHeight = Math.sin(angle);
-    const dayFactor = smoothstep(-0.2, 0.2, sunHeight);
-    const twilightFactor = Math.max(0, 1 - Math.abs(sunHeight) * 4);
-
-    // Rotacion suave del cielo
-    sky.rotation.y += dt * 0.01;
-
-    // Colores de cielo y niebla
-    tmpColorA.copy(nightSkyColor).lerp(daySkyColor, dayFactor);
-    tmpColorB.copy(tmpColorA).lerp(duskSkyColor, twilightFactor * (1 - dayFactor * 0.6));
-    renderer.setClearColor(tmpColorB, 1);
-    scene.fog.color.copy(tmpColorB);
-    scene.fog.near = THREE.MathUtils.lerp(14, 24, dayFactor);
-    scene.fog.far = THREE.MathUtils.lerp(85, 155, dayFactor);
-
-    // Luces
-    ambientLight.intensity = THREE.MathUtils.lerp(0.35, 1.9, dayFactor);
-    hemiLight.intensity = THREE.MathUtils.lerp(0.2, 0.75, dayFactor);
-    hemiLight.color.copy(nightHemiSky).lerp(dayHemiSky, dayFactor);
-    hemiLight.groundColor.copy(nightHemiGround).lerp(dayHemiGround, dayFactor);
-    dirLight.intensity = THREE.MathUtils.lerp(0.06, 1.6, dayFactor);
-    dirLight.color.copy(nightSunColor).lerp(daySunColor, dayFactor);
-
-    // Orbita solar/lunar
-    const orbitX = Math.cos(angle) * 120;
-    const orbitY = 24 + sunHeight * 90;
-    sun.position.set(orbitX, orbitY, -120);
-    moon.position.set(-orbitX, 24 - sunHeight * 90, -120);
-    sunMaterial.opacity = THREE.MathUtils.lerp(0.2, 1, dayFactor);
-    moonMaterial.opacity = THREE.MathUtils.lerp(0.95, 0.15, dayFactor);
-
-    // La direccional sigue el sol para sombras coherentes
-    dirLight.position.set(orbitX * 0.7, Math.max(8, orbitY), 70);
-}
-
-function initPostProcessing() {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    const px = renderer.getPixelRatio();
-
-    composer = new EffectComposer(renderer);
-    composer.addPass(new RenderPass(scene, camera));
-
-    ssaoPass = new SSAOPass(scene, camera, w, h);
-    ssaoPass.kernelRadius = 12;
-    ssaoPass.minDistance = 0.002;
-    ssaoPass.maxDistance = 0.22;
-    composer.addPass(ssaoPass);
-
-    bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.3, 0.75, 0.9);
-    composer.addPass(bloomPass);
-
-    fxaaPass = new ShaderPass(FXAAShader);
-    fxaaPass.material.uniforms['resolution'].value.set(1 / (w * px), 1 / (h * px));
-    composer.addPass(fxaaPass);
-
-    applyGraphicsQuality(graphicsQuality);
-}
-// --- CARRETERA Y TEXTURAS ---
-// Cargar textura de asfalto (Imagen real desde fuente confiable)
-// const textureLoader = new THREE.TextureLoader(); // Ya declarado arriba
-// textureLoader.crossOrigin = 'anonymous';
-
-function createRoadTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 1024;
-    const ctx = canvas.getContext('2d');
-
-    ctx.fillStyle = '#2a2a2a';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Ruido suave para simular asfalto y evitar depender de assets faltantes.
-    for (let i = 0; i < 12000; i++) {
-        const shade = 40 + Math.floor(Math.random() * 35);
-        ctx.fillStyle = `rgb(${shade}, ${shade}, ${shade})`;
-        const x = Math.random() * canvas.width;
-        const y = Math.random() * canvas.height;
-        const size = 1 + Math.random() * 2;
-        ctx.fillRect(x, y, size, size);
-    }
-
-    return new THREE.CanvasTexture(canvas);
-}
-
-const roadTexture = createRoadTexture();
-
-roadTexture.wrapS = THREE.RepeatWrapping;
-roadTexture.wrapT = THREE.RepeatWrapping;
-roadTexture.repeat.set(1, 10);
-
-const roadGeo = new THREE.PlaneGeometry(12, 400);
-const roadMat = new THREE.MeshStandardMaterial({
-    map: roadTexture,
-    color: 0x888888,
-    roughness: 0.62,
-    metalness: 0.28,
-    envMapIntensity: 0.9
-});
-const road = new THREE.Mesh(roadGeo, roadMat);
-road.rotation.x = -Math.PI / 2;
-scene.add(road);
-
-// LÃ­neas laterales (GeometrÃ­a separada)
-const lineGeo = new THREE.PlaneGeometry(0.5, 400);
-const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-const leftLine = new THREE.Mesh(lineGeo, lineMat);
-leftLine.rotation.x = -Math.PI / 2;
-leftLine.position.set(-5, 0.02, 0); // Ligeramente elevado
-scene.add(leftLine);
-
-const rightLine = new THREE.Mesh(lineGeo, lineMat);
-rightLine.rotation.x = -Math.PI / 2;
-rightLine.position.set(5, 0.02, 0);
-scene.add(rightLine);
-
-// LÃ­neas centrales (Amarillas discontinuas)
-const centerLineGeo = new THREE.PlaneGeometry(0.3, 400);
-const centerLineMat = new THREE.MeshBasicMaterial({ color: 0xffcc00 });
-
-// Para hacerlas discontinuas usamos un truco de textura alpha o geometrÃ­a mÃºltiple.
-// Por simplicidad/rendimiento, usaremos una textura procedural simple para la lÃ­nea central transparente
-const canvasDash = document.createElement('canvas');
-canvasDash.width = 32; canvasDash.height = 64;
-const ctxDash = canvasDash.getContext('2d');
-ctxDash.fillStyle = '#ffcc00'; // Color
-ctxDash.fillRect(0, 0, 32, 32); // Mitad rellena
-ctxDash.clearRect(0, 32, 32, 32); // Mitad transparente
-
-const dashTex = new THREE.CanvasTexture(canvasDash);
-dashTex.wrapT = THREE.RepeatWrapping;
-dashTex.repeat.set(1, 40); // Repetir muchas veces
-
-const dashMat = new THREE.MeshBasicMaterial({
-    map: dashTex,
-    transparent: true,
-    alphaTest: 0.5
-});
-
-const centerLineLeft = new THREE.Mesh(centerLineGeo, dashMat);
-centerLineLeft.rotation.x = -Math.PI / 2;
-centerLineLeft.position.set(-1.66, 0.02, 0);
-scene.add(centerLineLeft);
-
-const centerLineRight = new THREE.Mesh(centerLineGeo, dashMat);
-centerLineRight.rotation.x = -Math.PI / 2;
-centerLineRight.position.set(1.66, 0.02, 0);
-scene.add(centerLineRight);
-
-
-// CÃ©sped lateral (Textura mejorada)
-function createGrassTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
-    const ctx = canvas.getContext('2d');
-
-    // Fondo verde tierra
-    ctx.fillStyle = '#1a3300';
-    ctx.fillRect(0, 0, 512, 512);
-
-    // Ruido de hierba
-    for (let i = 0; i < 40000; i++) {
-        const color = Math.random() > 0.5 ? '#2d4d00' : '#142900';
-        ctx.fillStyle = color;
-        const x = Math.random() * 512;
-        const y = Math.random() * 512;
-        const w = 1 + Math.random() * 2;
-        const h = 2 + Math.random() * 3;
-        ctx.fillRect(x, y, w, h);
-    }
-
-    let tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(50, 50); // Mucha repeticiÃ³n para detalle
-    return tex;
-}
-
-const grassTex = createGrassTexture();
-const grassMat = new THREE.MeshStandardMaterial({
-    map: grassTex,
-    roughness: 0.95,
-    metalness: 0.03,
-    envMapIntensity: 0.45
-});
-
-// Plano de suelo infinito (simulado)
-const groundGeo = new THREE.PlaneGeometry(500, 500);
-const ground = new THREE.Mesh(groundGeo, grassMat);
-ground.rotation.x = -Math.PI / 2;
-ground.position.y = -0.1; // Justo debajo de la carretera
-scene.add(ground);
-
-// --- MONTAÃ‘AS ---
-function createMountain(x, z, scale) {
-    const geo = new THREE.ConeGeometry(scale, scale * 1.5, 4); // PirÃ¡mides low poly
-    const mat = new THREE.MeshStandardMaterial({
-        color: 0x4d4d4d,
-        roughness: 0.9,
-        flatShading: true // Low poly look
-    });
-    const mountain = new THREE.Mesh(geo, mat);
-    mountain.position.set(x, scale * 0.75 - 10, z); // Enterradas un poco
-    scene.add(mountain);
-}
-
-// Generar paisaje de fondo
-for (let i = 0; i < 15; i++) {
-    // MontaÃ±as izquierda lejana
-    createMountain(-80 - Math.random() * 100, -100 - Math.random() * 100, 30 + Math.random() * 50);
-    // MontaÃ±as derecha lejana
-    createMountain(80 + Math.random() * 100, -100 - Math.random() * 100, 30 + Math.random() * 50);
-}
-
-// Mas volumen en el horizonte para evitar el efecto de vacio
-function createDistantMonolith(x, z, w, h, d, color = 0x3f3f3f) {
-    const rock = new THREE.Mesh(
-        new THREE.BoxGeometry(w, h, d, 2, 3, 2),
-        new THREE.MeshStandardMaterial({ color, roughness: 0.95, metalness: 0.02, flatShading: true })
-    );
-    rock.position.set(x, h * 0.5 - 6, z);
-    rock.rotation.y = (Math.random() - 0.5) * 0.7;
-    scene.add(rock);
-}
-
-for (let i = 0; i < 22; i++) {
-    createDistantMonolith(
-        -58 - Math.random() * 95,
-        -40 - Math.random() * 230,
-        8 + Math.random() * 12,
-        16 + Math.random() * 26,
-        8 + Math.random() * 12,
-        0x474747
-    );
-    createDistantMonolith(
-        58 + Math.random() * 95,
-        -40 - Math.random() * 230,
-        8 + Math.random() * 12,
-        16 + Math.random() * 26,
-        8 + Math.random() * 12,
-        0x454545
-    );
-}
-
-// --- ÃRBOLES ---
-function createTreeTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-
-    // Tronco
-    ctx.fillStyle = '#4d3319';
-    ctx.fillRect(56, 90, 16, 38);
-
-    // Hojas (TriÃ¡ngulos superpuestos para estilo pino)
-    ctx.fillStyle = '#1e591e';
-
-    // Capa baja
-    ctx.beginPath();
-    ctx.moveTo(10, 90);
-    ctx.lineTo(64, 40);
-    ctx.lineTo(118, 90);
-    ctx.fill();
-
-    // Capa media
-    ctx.fillStyle = '#267326';
-    ctx.beginPath();
-    ctx.moveTo(20, 65);
-    ctx.lineTo(64, 20);
-    ctx.lineTo(108, 65);
-    ctx.fill();
-
-    // Capa alta
-    ctx.fillStyle = '#339933';
-    ctx.beginPath();
-    ctx.moveTo(30, 40);
-    ctx.lineTo(64, 0);
-    ctx.lineTo(98, 40);
-    ctx.fill();
-
-    let tex = new THREE.CanvasTexture(canvas);
-    // tex.magFilter = THREE.NearestFilter; // Pixel art look
-    return tex;
-}
-
-const treeTex = createTreeTexture();
-const treeMat = new THREE.SpriteMaterial({ map: treeTex });
-let trees = [];
-
-function spawnTree() {
-    // Crear árbol a la izquierda o derecha
-    let side = Math.random() > 0.5 ? 1 : -1;
-    let offset = 6.8 + Math.random() * 12.5; // Distancia desde la carretera
-
-    let tree = new THREE.Sprite(treeMat);
-    const size = 3.6 + Math.random() * 1.8;
-    tree.scale.set(size, size, 1);
-    tree.userData.side = side;
-    tree.userData.offset = offset;
-    tree.position.set(side * offset, 2, -100);
-    tree.center.set(0.5, 0.0); // Anclar árbol al suelo desde su base
-    scene.add(tree);
-    trees.push(tree);
-
-    // Densidad extra: algunos spawns crean un árbol acompañante.
-    if (Math.random() < 0.35) {
-        const companion = new THREE.Sprite(treeMat);
-        const cSize = 3.2 + Math.random() * 1.6;
-        companion.scale.set(cSize, cSize, 1);
-        companion.userData.side = side;
-        companion.userData.offset = offset + (Math.random() * 2.2 + 0.8);
-        companion.position.set(side * companion.userData.offset, 2, -102 - Math.random() * 9);
-        companion.center.set(0.5, 0.0);
-        scene.add(companion);
-        trees.push(companion);
-    }
-}
-// Generar Ã¡rboles iniciales
-for (let i = 0; i < 42; i++) {
-    let side = Math.random() > 0.5 ? 1 : -1;
-    let offset = 6.8 + Math.random() * 12.5;
-    let tree = new THREE.Sprite(treeMat);
-    const size = 3.4 + Math.random() * 1.9;
-    tree.scale.set(size, size, 1);
-    tree.userData.side = side;
-    tree.userData.offset = offset;
-    tree.position.set(side * offset, 2, -120 + i * 6.5); // Distribuir más denso
-    tree.center.set(0.5, 0.0); // Anclar base
-    scene.add(tree);
-    trees.push(tree);
-}
-
-const mapProps = [];
-const roadsideCliffs = [];
-const cliffSegmentsPerSide = 18;
-
-function createRoadsideCliffSegment(side, z) {
-    const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(1, 1, 1, 2, 2, 2),
-        new THREE.MeshStandardMaterial({
-            color: new THREE.Color().setHSL(0.08, 0.06, 0.23 + Math.random() * 0.08),
-            roughness: 0.98,
-            metalness: 0.01,
-            flatShading: true
-        })
-    );
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.userData.side = side;
-    resetRoadsideCliffSegment(mesh, z);
-    return mesh;
-}
-
-function resetRoadsideCliffSegment(segment, z) {
-    const side = segment.userData.side ?? 1;
-    const width = 8 + Math.random() * 10;
-    const height = 12 + Math.random() * 26;
-    const depth = 14 + Math.random() * 22;
-    segment.userData.offset = 28 + Math.random() * 20;
-    segment.userData.baseY = height * 0.42 + 1.2;
-    segment.userData.spin = (Math.random() - 0.5) * 0.004;
-    segment.scale.set(width, height, depth);
-    segment.position.set(side * segment.userData.offset, segment.userData.baseY, z);
-    segment.rotation.set((Math.random() - 0.5) * 0.06, (Math.random() - 0.5) * 0.45, side * 0.03);
-}
-
-function initRoadsideCliffs() {
-    for (let i = 0; i < cliffSegmentsPerSide; i++) {
-        const left = createRoadsideCliffSegment(-1, -35 - i * 18);
-        const right = createRoadsideCliffSegment(1, -35 - i * 18);
-        scene.add(left);
-        scene.add(right);
-        roadsideCliffs.push(left, right);
-    }
-}
-
-function createRoadSign() {
-    const group = new THREE.Group();
-    const pole = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.05, 0.05, 2.1, 12),
-        new THREE.MeshStandardMaterial({ color: 0xaab0b8, roughness: 0.4, metalness: 0.8 })
-    );
-    pole.position.y = 1.05;
-    pole.castShadow = true;
-    group.add(pole);
-
-    const sign = new THREE.Mesh(
-        new THREE.BoxGeometry(0.9, 0.55, 0.08, 3, 2, 1),
-        new THREE.MeshStandardMaterial({ color: 0x2f6fd6, roughness: 0.65, metalness: 0.1 })
-    );
-    sign.position.y = 2.05;
-    sign.castShadow = true;
-    group.add(sign);
-
-    return group;
-}
-
-function createLampPost() {
-    const group = new THREE.Group();
-    const pole = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.07, 0.08, 3.2, 12),
-        new THREE.MeshStandardMaterial({ color: 0x6d737a, roughness: 0.5, metalness: 0.5 })
-    );
-    pole.position.y = 1.6;
-    pole.castShadow = true;
-    group.add(pole);
-
-    const arm = new THREE.Mesh(
-        new THREE.BoxGeometry(0.7, 0.08, 0.08),
-        new THREE.MeshStandardMaterial({ color: 0x6d737a, roughness: 0.5, metalness: 0.5 })
-    );
-    arm.position.set(0.3, 3.05, 0);
-    arm.castShadow = true;
-    group.add(arm);
-
-    const lamp = new THREE.Mesh(
-        new THREE.SphereGeometry(0.11, 12, 10),
-        new THREE.MeshStandardMaterial({ color: 0xffe6a0, emissive: 0xffd36b, emissiveIntensity: 0.5 })
-    );
-    lamp.position.set(0.62, 2.95, 0);
-    group.add(lamp);
-
-    return group;
-}
-
-function createRoadRock() {
-    const rock = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(0.45 + Math.random() * 0.25, 0),
-        new THREE.MeshStandardMaterial({ color: 0x565656, roughness: 0.95, metalness: 0.02, flatShading: true })
-    );
-    rock.castShadow = true;
-    return rock;
-}
-
-function createGiantRock() {
-    const g = new THREE.Group();
-    const base = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(1.35 + Math.random() * 1.2, 0),
-        new THREE.MeshStandardMaterial({ color: 0x4f4f4f, roughness: 0.98, metalness: 0.01, flatShading: true })
-    );
-    base.castShadow = true;
-    base.rotation.set(Math.random() * 0.4, Math.random() * Math.PI, Math.random() * 0.4);
-    g.add(base);
-
-    if (Math.random() < 0.7) {
-        const child = new THREE.Mesh(
-            new THREE.DodecahedronGeometry(0.65 + Math.random() * 0.8, 0),
-            new THREE.MeshStandardMaterial({ color: 0x585858, roughness: 0.98, metalness: 0.01, flatShading: true })
-        );
-        child.position.set((Math.random() - 0.5) * 1.4, 0.45, (Math.random() - 0.5) * 1.2);
-        child.castShadow = true;
-        g.add(child);
-    }
-
-    g.position.y = 1.2;
-    return g;
-}
-
-function spawnMapProp(z = -110) {
-    const side = Math.random() > 0.5 ? 1 : -1;
-    const r = Math.random();
-    let prop;
-    let offset = 9 + Math.random() * 13;
-    let kind = "rock";
-
-    if (r < 0.25) {
-        prop = createGiantRock();
-        offset = 16 + Math.random() * 18;
-        kind = "giant_rock";
-    } else if (r < 0.58) {
-        prop = createRoadRock();
-        kind = "rock";
-    } else if (r < 0.82) {
-        prop = createRoadSign();
-        kind = "sign";
-    } else {
-        prop = createLampPost();
-        kind = "lamp";
-    }
-
-    prop.userData.side = side;
-    prop.userData.offset = offset;
-    prop.userData.kind = kind;
-    prop.userData.baseY = prop.position.y;
-    prop.userData.spin = (Math.random() - 0.5) * 0.03;
-    prop.position.z = z;
-    scene.add(prop);
-    mapProps.push(prop);
-}
-
-for (let i = 0; i < 24; i++) {
-    spawnMapProp(-25 - Math.random() * 135);
-}
-initRoadsideCliffs();
-
-// --- MODELADO DE COCHES 3D CON ACABADO PREMIUM (RTX) ---
-function createCar(color, polyMultiplier = 1) {
-    const carGroup = new THREE.Group();
-    const detail = THREE.MathUtils.clamp(polyMultiplier, 1, 20);
-
-    // Chasis con Pintura Metalizada (MeshPhysicalMaterial)
-    const bodyGeo = new THREE.BoxGeometry(
-        1.2, 0.5, 2.2,
-        getDetailSegments(8, detail),
-        getDetailSegments(4, detail),
-        getDetailSegments(12, detail)
-    );
-    const bodyMat = new THREE.MeshPhysicalMaterial({
-        color: color,
-        metalness: 0.7,
-        roughness: 0.1,
-        clearcoat: 1.0,
-        clearcoatRoughness: 0.1,
-        envMapIntensity: 1.5
-    });
-    const body = new THREE.Mesh(bodyGeo, bodyMat);
-    body.position.y = 0.4;
-    body.castShadow = true;
-    body.receiveShadow = true;
-    carGroup.add(body);
-
-    // Cabina (Cristales reflectantes)
-    const cabinGeo = new THREE.BoxGeometry(
-        0.9, 0.4, 1.0,
-        getDetailSegments(6, detail),
-        getDetailSegments(3, detail),
-        getDetailSegments(6, detail)
-    );
-    const cabinMat = new THREE.MeshPhysicalMaterial({
-        color: 0x111111,
-        metalness: 0.9,
-        roughness: 0.0,
-        transparent: true,
-        opacity: 0.7,
-        envMapIntensity: 2.0
-    });
-    const cabin = new THREE.Mesh(cabinGeo, cabinMat);
-    cabin.position.set(0, 0.8, -0.2);
-    cabin.castShadow = true;
-    carGroup.add(cabin);
-
-    // Ruedas con material gomoso
-    const wheelGeo = new THREE.CylinderGeometry(
-        0.25, 0.25, 0.2,
-        getDetailSegments(40, detail, 640),
-        getDetailSegments(3, detail, 40)
-    );
-    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.9 });
-    const rimMat = new THREE.MeshStandardMaterial({ color: 0xb9bec8, roughness: 0.3, metalness: 0.85 });
-
-    // ... (posiciones de ruedas se mantienen)
-    const wheelPositions = [
-        [-0.6, 0.25, 0.7], [0.6, 0.25, 0.7],
-        [-0.6, 0.25, -0.7], [0.6, 0.25, -0.7]
-    ];
-
-    wheelPositions.forEach(pos => {
-        const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-        wheel.rotation.z = Math.PI / 2;
-        wheel.position.set(pos[0], pos[1], pos[2]);
-        wheel.castShadow = true;
-        carGroup.add(wheel);
-
-        const rim = new THREE.Mesh(new THREE.CylinderGeometry(
-            0.14, 0.14, 0.205,
-            getDetailSegments(36, detail, 640),
-            getDetailSegments(2, detail, 40)
-        ), rimMat);
-        rim.rotation.z = Math.PI / 2;
-        rim.position.set(pos[0], pos[1], pos[2]);
-        rim.castShadow = true;
-        carGroup.add(rim);
-
-        const hub = new THREE.Mesh(new THREE.CylinderGeometry(
-            0.06, 0.06, 0.21,
-            getDetailSegments(20, detail, 320),
-            getDetailSegments(1, detail, 24)
-        ), wheelMat);
-        hub.rotation.z = Math.PI / 2;
-        hub.position.set(pos[0], pos[1], pos[2]);
-        hub.castShadow = true;
-        carGroup.add(hub);
-
-        const brakeDisc = new THREE.Mesh(new THREE.CylinderGeometry(
-            0.18, 0.18, 0.035,
-            getDetailSegments(28, detail, 420),
-            getDetailSegments(1, detail, 24)
-        ), rimMat);
-        brakeDisc.rotation.z = Math.PI / 2;
-        brakeDisc.position.set(pos[0], pos[1], pos[2]);
-        brakeDisc.castShadow = true;
-        carGroup.add(brakeDisc);
-
-        const caliper = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.1, 0.14, 2, 2, 3), bodyMat);
-        caliper.position.set(pos[0] + (pos[0] > 0 ? 0.09 : -0.09), pos[1] + 0.02, pos[2]);
-        caliper.castShadow = true;
-        carGroup.add(caliper);
-    });
-
-    // Luces con emisiÃ³n de luz (Glow)
-    const lightGeo = new THREE.BoxGeometry(
-        0.3, 0.15, 0.1,
-        getDetailSegments(3, detail),
-        getDetailSegments(2, detail),
-        getDetailSegments(2, detail)
-    );
-    const lightMat = new THREE.MeshStandardMaterial({
-        color: 0xffffaa,
-        emissive: 0xffffaa,
-        emissiveIntensity: 2
-    });
-
-    const frontLightL = new THREE.Mesh(lightGeo, lightMat);
-    frontLightL.position.set(-0.35, 0.45, -1.1);
-    carGroup.add(frontLightL);
-
-    const frontLightR = new THREE.Mesh(lightGeo, lightMat);
-    frontLightR.position.set(0.35, 0.45, -1.1);
-    carGroup.add(frontLightR);
-
-    // Piezas extra para aumentar detalle visual/poligonal
-    const trimMat = new THREE.MeshStandardMaterial({ color: 0x161616, roughness: 0.75, metalness: 0.25 });
-
-    const hoodGeo = new THREE.BoxGeometry(
-        1.06, 0.12, 0.68,
-        getDetailSegments(4, detail),
-        getDetailSegments(2, detail),
-        getDetailSegments(6, detail)
-    );
-    const hood = new THREE.Mesh(hoodGeo, bodyMat);
-    hood.position.set(0, 0.67, -0.86);
-    hood.castShadow = true;
-    carGroup.add(hood);
-
-    const bumperGeo = new THREE.BoxGeometry(
-        1.08, 0.18, 0.18,
-        getDetailSegments(4, detail),
-        getDetailSegments(2, detail),
-        getDetailSegments(2, detail)
-    );
-    const frontBumper = new THREE.Mesh(bumperGeo, trimMat);
-    frontBumper.position.set(0, 0.34, -1.16);
-    frontBumper.castShadow = true;
-    carGroup.add(frontBumper);
-
-    const rearBumper = new THREE.Mesh(bumperGeo, trimMat);
-    rearBumper.position.set(0, 0.34, 1.16);
-    rearBumper.castShadow = true;
-    carGroup.add(rearBumper);
-
-    const sideSkirtGeo = new THREE.BoxGeometry(
-        0.08, 0.15, 1.7,
-        getDetailSegments(3, detail),
-        getDetailSegments(2, detail),
-        getDetailSegments(6, detail)
-    );
-    const leftSkirt = new THREE.Mesh(sideSkirtGeo, trimMat);
-    leftSkirt.position.set(-0.63, 0.28, 0);
-    leftSkirt.castShadow = true;
-    carGroup.add(leftSkirt);
-
-    const rightSkirt = new THREE.Mesh(sideSkirtGeo, trimMat);
-    rightSkirt.position.set(0.63, 0.28, 0);
-    rightSkirt.castShadow = true;
-    carGroup.add(rightSkirt);
-
-    const mirrorGeo = new THREE.BoxGeometry(
-        0.12, 0.09, 0.18,
-        getDetailSegments(3, detail),
-        getDetailSegments(2, detail),
-        getDetailSegments(3, detail)
-    );
-    const leftMirror = new THREE.Mesh(mirrorGeo, trimMat);
-    leftMirror.position.set(-0.56, 0.76, -0.26);
-    leftMirror.castShadow = true;
-    carGroup.add(leftMirror);
-
-    const rightMirror = new THREE.Mesh(mirrorGeo, trimMat);
-    rightMirror.position.set(0.56, 0.76, -0.26);
-    rightMirror.castShadow = true;
-    carGroup.add(rightMirror);
-
-    const wheelArchGeo = new THREE.TorusGeometry(
-        0.3, 0.03,
-        getDetailSegments(10, detail, 180),
-        getDetailSegments(24, detail, 440),
-        Math.PI
-    );
-    const wheelArchPositions = [
-        [-0.56, 0.36, 0.7, Math.PI / 2],
-        [0.56, 0.36, 0.7, -Math.PI / 2],
-        [-0.56, 0.36, -0.7, Math.PI / 2],
-        [0.56, 0.36, -0.7, -Math.PI / 2]
-    ];
-    wheelArchPositions.forEach(([x, y, z, rotY]) => {
-        const arch = new THREE.Mesh(wheelArchGeo, trimMat);
-        arch.position.set(x, y, z);
-        arch.rotation.set(0, rotY, Math.PI / 2);
-        arch.castShadow = true;
-        carGroup.add(arch);
-    });
-
-    const spoilerBaseGeo = new THREE.BoxGeometry(
-        0.06, 0.2, 0.06,
-        getDetailSegments(2, detail),
-        getDetailSegments(2, detail),
-        getDetailSegments(2, detail)
-    );
-    const spoilerWingGeo = new THREE.BoxGeometry(
-        0.95, 0.05, 0.2,
-        getDetailSegments(6, detail),
-        getDetailSegments(2, detail),
-        getDetailSegments(3, detail)
-    );
-    const spoilerLeft = new THREE.Mesh(spoilerBaseGeo, trimMat);
-    spoilerLeft.position.set(-0.3, 0.86, 0.97);
-    spoilerLeft.castShadow = true;
-    carGroup.add(spoilerLeft);
-    const spoilerRight = new THREE.Mesh(spoilerBaseGeo, trimMat);
-    spoilerRight.position.set(0.3, 0.86, 0.97);
-    spoilerRight.castShadow = true;
-    carGroup.add(spoilerRight);
-    const spoilerWing = new THREE.Mesh(spoilerWingGeo, trimMat);
-    spoilerWing.position.set(0, 0.96, 0.99);
-    spoilerWing.castShadow = true;
-    carGroup.add(spoilerWing);
-
-    const exhaustGeo = new THREE.CylinderGeometry(
-        0.04, 0.04, 0.18,
-        getDetailSegments(18, detail, 280),
-        getDetailSegments(1, detail, 24)
-    );
-    const exhaustL = new THREE.Mesh(exhaustGeo, trimMat);
-    exhaustL.rotation.x = Math.PI / 2;
-    exhaustL.position.set(-0.23, 0.2, 1.2);
-    exhaustL.castShadow = true;
-    carGroup.add(exhaustL);
-    const exhaustR = new THREE.Mesh(exhaustGeo, trimMat);
-    exhaustR.rotation.x = Math.PI / 2;
-    exhaustR.position.set(0.23, 0.2, 1.2);
-    exhaustR.castShadow = true;
-    carGroup.add(exhaustR);
-
-    const grilleMat = new THREE.MeshStandardMaterial({ color: 0x0b0b0b, roughness: 0.55, metalness: 0.4 });
-    const grilleSlatGeo = new THREE.BoxGeometry(
-        0.95, 0.02, 0.02,
-        getDetailSegments(4, detail),
-        getDetailSegments(1, detail),
-        getDetailSegments(1, detail)
-    );
-    for (let i = 0; i < 6; i++) {
-        const slat = new THREE.Mesh(grilleSlatGeo, grilleMat);
-        slat.position.set(0, 0.39 + i * 0.03, -1.16);
-        slat.castShadow = true;
-        carGroup.add(slat);
-    }
-
-    const roofAntenna = new THREE.Mesh(new THREE.CylinderGeometry(
-        0.008, 0.008, 0.22,
-        getDetailSegments(10, detail, 140),
-        getDetailSegments(1, detail, 24)
-    ), trimMat);
-    roofAntenna.position.set(0.12, 1.04, 0.1);
-    roofAntenna.castShadow = true;
-    carGroup.add(roofAntenna);
-    const antennaTip = new THREE.Mesh(new THREE.SphereGeometry(
-        0.018,
-        getDetailSegments(10, detail, 180),
-        getDetailSegments(8, detail, 140)
-    ), rimMat);
-    antennaTip.position.set(0.12, 1.16, 0.1);
-    antennaTip.castShadow = true;
-    carGroup.add(antennaTip);
-
-    return carGroup;
-}
-
-function createWreckedCar() {
-    const wreckColors = [0x5c5c5c, 0x4a2f2f, 0x3a3d52, 0x4f3d2c];
-    const carGroup = createCar(wreckColors[Math.floor(Math.random() * wreckColors.length)], 1);
-
-    // Aspecto de choque: inclinaciÃ³n, piezas oscuras y "humo" estÃ¡tico.
-    carGroup.rotation.set(
-        (Math.random() - 0.5) * 0.18,
-        (Math.random() - 0.5) * 0.9,
-        (Math.random() - 0.5) * 0.15
-    );
-
-    const dentGeo = new THREE.BoxGeometry(0.5, 0.15, 0.2);
-    const dentMat = new THREE.MeshStandardMaterial({ color: 0x1e1e1e, roughness: 1 });
-
-    for (let i = 0; i < 3; i++) {
-        const dent = new THREE.Mesh(dentGeo, dentMat);
-        dent.position.set((Math.random() - 0.5) * 1.0, 0.45 + Math.random() * 0.25, (Math.random() - 0.5) * 1.8);
-        dent.rotation.set(Math.random(), Math.random(), Math.random());
-        carGroup.add(dent);
-    }
-
-    return carGroup;
-}
-
-const skidParticles = [];
-const skidParticleGeo = new THREE.SphereGeometry(0.08, 6, 6);
-const skidParticleMat = new THREE.MeshBasicMaterial({ color: 0xd8d8d8, transparent: true, opacity: 0.9 });
-const speedLines = [];
-const speedLineGeo = new THREE.BoxGeometry(0.04, 0.04, 1.7);
-const speedLineMat = new THREE.MeshBasicMaterial({ color: 0xdbe9ff, transparent: true, opacity: 0.35 });
-let speedLineSpawnAccumulator = 0;
-
-function spawnSpeedLine(playerRoadCenter, speedNorm) {
-    const line = new THREE.Mesh(speedLineGeo, speedLineMat.clone());
-    const lateral = (Math.random() - 0.5) * 16;
-    line.position.set(
-        playerRoadCenter + lateral,
-        0.6 + Math.random() * 4.6,
-        -48 - Math.random() * 34
-    );
-    const scaleBoost = 1 + speedNorm * 1.4;
-    line.scale.set(1, 1, scaleBoost);
-    line.userData.vz = 0.6 + Math.random() * 1.8 + speedNorm * 2.4;
-    line.userData.life = 0.28 + Math.random() * 0.3;
-    line.userData.vx = lateral * -0.002;
-    line.material.opacity = 0.18 + speedNorm * 0.35;
-    scene.add(line);
-    speedLines.push(line);
-}
-
-function spawnSkidParticles(direction) {
-    for (let i = 0; i < 14; i++) {
-        const particle = new THREE.Mesh(skidParticleGeo, skidParticleMat.clone());
-        particle.position.set(
-            player.position.x + direction * (0.2 + Math.random() * 0.4),
-            0.25 + Math.random() * 0.2,
-            player.position.z + 0.5 + (Math.random() - 0.5) * 0.8
-        );
-        particle.userData.vx = direction * (0.01 + Math.random() * 0.02);
-        particle.userData.vy = 0.01 + Math.random() * 0.02;
-        particle.userData.vz = 0.02 + Math.random() * 0.04;
-        particle.userData.life = 0.45 + Math.random() * 0.25;
-        scene.add(particle);
-        skidParticles.push(particle);
-    }
-}
-
-let audioCtx = null;
-let musicMasterGain = null;
-let musicPlaylist = [];
-let activeMusicAudio = null;
-const musicState = {
-    isRunning: false,
-    timerId: null,
-    currentTrackIndex: 0,
-    noteIndex: 0,
-    nextNoteTime: 0
+const skyUniforms = {
+  uDayTopColor: { value: new THREE.Color(0x66a8ff) },
+  uDayHorizonColor: { value: new THREE.Color(0xcde7ff) },
+  uNightTopColor: { value: new THREE.Color(0x040815) },
+  uNightHorizonColor: { value: new THREE.Color(0x1b2844) },
+  uGroundDayColor: { value: new THREE.Color(0x7ea3b0) },
+  uGroundNightColor: { value: new THREE.Color(0x152131) },
+  uSunsetColor: { value: new THREE.Color(0xff8a54) },
+  uSunDir: { value: new THREE.Vector3(0.2, 0.8, -0.4).normalize() },
+  uMoonDir: { value: new THREE.Vector3(-0.2, 0.8, 0.4).normalize() },
+  uDayFactor: { value: 1.0 },
+  uTwilightFactor: { value: 0.0 },
+  uNightFactor: { value: 0.0 },
+  uTime: { value: 0 }
 };
 
-const musicTracks = [
-    {
-        tempo: 108,
-        notes: [
-            [52, 1], [55, 1], [59, 1], [64, 1],
-            [59, 1], [55, 1], [52, 1], [47, 1],
-            [52, 1], [55, 1], [59, 1], [62, 1],
-            [59, 1], [55, 1], [52, 2]
-        ]
+const skyDome = new THREE.Mesh(
+  new THREE.SphereGeometry(1500, 64, 40),
+  new THREE.ShaderMaterial({
+    uniforms: skyUniforms,
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+    vertexShader: `
+      varying vec3 vWorldPos;
+      void main() {
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorldPos = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vWorldPos;
+      uniform vec3 uDayTopColor;
+      uniform vec3 uDayHorizonColor;
+      uniform vec3 uNightTopColor;
+      uniform vec3 uNightHorizonColor;
+      uniform vec3 uGroundDayColor;
+      uniform vec3 uGroundNightColor;
+      uniform vec3 uSunsetColor;
+      uniform vec3 uSunDir;
+      uniform vec3 uMoonDir;
+      uniform float uDayFactor;
+      uniform float uTwilightFactor;
+      uniform float uNightFactor;
+      uniform float uTime;
+
+      float hash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+      }
+
+      float noise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        float a = hash(i);
+        float b = hash(i + vec2(1.0, 0.0));
+        float c = hash(i + vec2(0.0, 1.0));
+        float d = hash(i + vec2(1.0, 1.0));
+        return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+      }
+
+      void main() {
+        vec3 dir = normalize(vWorldPos);
+        float h = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+
+        vec3 daySky = mix(uDayHorizonColor, uDayTopColor, smoothstep(0.45, 0.95, h));
+        vec3 nightSky = mix(uNightHorizonColor, uNightTopColor, smoothstep(0.25, 0.95, h));
+        vec3 sky = mix(nightSky, daySky, uDayFactor);
+        vec3 groundCol = mix(uGroundNightColor, uGroundDayColor, uDayFactor);
+        sky = mix(groundCol, sky, smoothstep(0.02, 0.35, h));
+
+        float sunsetBand = smoothstep(0.08, 0.55, 1.0 - abs(dir.y));
+        sky += uSunsetColor * (uTwilightFactor * sunsetBand * 0.34);
+
+        float sunAmount = max(dot(dir, normalize(uSunDir)), 0.0);
+        float sunDisk = smoothstep(0.9992, 1.0, sunAmount);
+        float sunGlow = pow(sunAmount, 26.0) * 0.34 + pow(sunAmount, 90.0) * 0.35;
+        sky += vec3(1.0, 0.86, 0.58) * ((sunDisk * 1.2 + sunGlow) * (uDayFactor + uTwilightFactor * 0.8));
+
+        float moonAmount = max(dot(dir, normalize(uMoonDir)), 0.0);
+        float moonDisk = smoothstep(0.99935, 1.0, moonAmount);
+        float moonGlow = pow(moonAmount, 40.0) * 0.26;
+        sky += vec3(0.72, 0.84, 1.0) * (moonDisk * 1.35 + moonGlow) * uNightFactor;
+
+        vec2 starUv = vec2(atan(dir.z, dir.x) / 6.2831853 + 0.5, acos(clamp(dir.y, -1.0, 1.0)) / 3.1415926);
+        vec2 starGrid = floor(starUv * vec2(900.0, 450.0));
+        float starSeed = hash(starGrid);
+        float star = step(0.9975, starSeed);
+        float twinkle = 0.55 + 0.45 * sin(uTime * 3.0 + starSeed * 90.0);
+        float starHorizonMask = smoothstep(0.18, 0.8, h);
+        sky += vec3(0.72, 0.83, 1.0) * star * twinkle * starHorizonMask * (uNightFactor * 1.25);
+
+        vec2 cloudUV = dir.xz * 3.2 + vec2(uTime * 0.01, uTime * 0.006);
+        float c = noise(cloudUV) * 0.7 + noise(cloudUV * 1.9) * 0.3;
+        float cloudMask = smoothstep(0.58, 0.78, c) * smoothstep(0.2, 0.8, h);
+        sky = mix(sky, sky + vec3(0.14), cloudMask * (0.16 + uDayFactor * 0.12 + uTwilightFactor * 0.05));
+
+        gl_FragColor = vec4(sky, 1.0);
+      }
+    `
+  })
+);
+scene.add(skyDome);
+
+const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1600);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+const hemi = new THREE.HemisphereLight(0x5b6f9a, 0x1a1610, 0.58);
+scene.add(hemi);
+
+const sunLight = new THREE.DirectionalLight(0xffffff, 1.1);
+sunLight.position.set(18, 24, 10);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(2048, 2048);
+sunLight.shadow.camera.left = -35;
+sunLight.shadow.camera.right = 35;
+sunLight.shadow.camera.top = 35;
+sunLight.shadow.camera.bottom = -35;
+sunLight.shadow.bias = -0.00018;
+sunLight.shadow.normalBias = 0.02;
+scene.add(sunLight);
+
+const sunCore = new THREE.Mesh(
+  new THREE.SphereGeometry(5.2, 24, 18),
+  new THREE.MeshBasicMaterial({ color: 0xffeea8 })
+);
+scene.add(sunCore);
+
+const moonCore = new THREE.Mesh(
+  new THREE.SphereGeometry(4.1, 24, 18),
+  new THREE.MeshBasicMaterial({ color: 0xc9d8ff })
+);
+scene.add(moonCore);
+
+const sunGlowUniforms = {
+  uTime: { value: 0 },
+  uColor: { value: new THREE.Color(0xffd36e) },
+  uIntensity: { value: 0.95 }
+};
+
+const sunGlow = new THREE.Mesh(
+  new THREE.PlaneGeometry(26, 26),
+  new THREE.ShaderMaterial({
+    uniforms: sunGlowUniforms,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec2 vUv;
+      uniform float uTime;
+      uniform vec3 uColor;
+      uniform float uIntensity;
+      void main() {
+        vec2 p = vUv * 2.0 - 1.0;
+        float d = length(p);
+        float ring = smoothstep(0.95, 0.35, d);
+        float pulse = 0.88 + 0.12 * sin(uTime * 2.1);
+        float glow = ring * pulse * uIntensity;
+        gl_FragColor = vec4(uColor, glow * 0.75);
+      }
+    `
+  })
+);
+scene.add(sunGlow);
+
+const moonGlow = new THREE.Mesh(
+  new THREE.PlaneGeometry(22, 22),
+  new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uColor: { value: new THREE.Color(0x9ab8ff) },
+      uIntensity: { value: 0.75 }
     },
-    {
-        tempo: 124,
-        notes: [
-            [57, 0.5], [59, 0.5], [62, 1], [64, 1],
-            [62, 0.5], [59, 0.5], [57, 1], [54, 1],
-            [57, 0.5], [59, 0.5], [62, 1], [66, 1],
-            [64, 0.5], [62, 0.5], [59, 1], [57, 1]
-        ]
-    }
-];
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec2 vUv;
+      uniform float uTime;
+      uniform vec3 uColor;
+      uniform float uIntensity;
+      void main() {
+        vec2 p = vUv * 2.0 - 1.0;
+        float d = length(p);
+        float halo = smoothstep(0.95, 0.2, d);
+        float pulse = 0.9 + 0.1 * sin(uTime * 1.6);
+        gl_FragColor = vec4(uColor, halo * pulse * uIntensity * 0.45);
+      }
+    `
+  })
+);
+scene.add(moonGlow);
 
-function midiToFrequency(midiNote) {
-    return 440 * Math.pow(2, (midiNote - 69) / 12);
+const terrainManager = new InfiniteTerrainChunks({ THREE, scene, textureLoader, renderer });
+
+const { group: player, parts: playerParts } = createCharacter(THREE);
+scene.add(player);
+
+const flashlight = new THREE.SpotLight(0xdde8ff, 0, 36, Math.PI / 8, 0.42, 1.2);
+flashlight.castShadow = true;
+flashlight.shadow.mapSize.set(1024, 1024);
+flashlight.shadow.bias = -0.00008;
+flashlight.shadow.normalBias = 0.012;
+scene.add(flashlight);
+
+const flashlightTarget = new THREE.Object3D();
+scene.add(flashlightTarget);
+flashlight.target = flashlightTarget;
+
+const flashlightLens = new THREE.Mesh(
+  new THREE.SphereGeometry(0.06, 14, 10),
+  new THREE.MeshBasicMaterial({ color: 0xd7e4ff, transparent: true, opacity: 0 })
+);
+scene.add(flashlightLens);
+
+function hash2(x, z) {
+  const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453123;
+  return s - Math.floor(s);
 }
 
-async function loadMusicPlaylist() {
-    try {
-        const response = await fetch("music.json", { method: "GET" });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const json = await response.json();
-        const tracks = Array.isArray(json?.tracks) ? json.tracks : [];
-        musicPlaylist = tracks
-            .map((track) => String(track?.url || "").trim())
-            .filter((url) => url.length > 0);
-    } catch (error) {
-        console.warn("No se pudo cargar music.json, se usara musica interna:", error);
-        musicPlaylist = [];
-    }
-}
+class TreeChunkManager {
+  constructor({ THREE, scene, terrainManager }) {
+    this.THREE = THREE;
+    this.scene = scene;
+    this.terrainManager = terrainManager;
+    this.cellSize = 90;
+    this.viewRadius = 4;
+    this.chunks = new Map();
+    this.windDirection = new THREE.Vector2(1.0, 0.38).normalize();
+    this.windStrength = 0.12;
 
-function ensureAudioContext() {
-    if (!audioCtx) {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return null;
-        audioCtx = new AC();
-        musicMasterGain = audioCtx.createGain();
-        musicMasterGain.gain.value = musicVolume;
-        musicMasterGain.connect(audioCtx.destination);
-    }
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    return audioCtx;
-}
+    this.trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x5b3a22, roughness: 0.92, metalness: 0.02 });
+    this.leafMaterial = new THREE.MeshStandardMaterial({ color: 0x2f7d32, roughness: 0.84, metalness: 0.01 });
 
-function setMusicVolume(value) {
-    musicVolume = THREE.MathUtils.clamp(value, 0, 1);
-    if (activeMusicAudio) activeMusicAudio.volume = musicVolume;
-    if (musicMasterGain && audioCtx) {
-        musicMasterGain.gain.setTargetAtTime(musicVolume, audioCtx.currentTime, 0.05);
-    }
-}
-
-function playExternalTrack(index) {
-    if (!musicPlaylist.length) return;
-    const safeIndex = ((index % musicPlaylist.length) + musicPlaylist.length) % musicPlaylist.length;
-    musicState.currentTrackIndex = safeIndex;
-
-    if (activeMusicAudio) {
-        activeMusicAudio.pause();
-        activeMusicAudio.src = "";
-        activeMusicAudio = null;
-    }
-
-    const audio = new Audio(musicPlaylist[safeIndex]);
-    audio.preload = "auto";
-    audio.volume = musicVolume;
-    audio.onended = () => {
-        if (!musicEnabled || !musicState.isRunning) return;
-        playExternalTrack(musicState.currentTrackIndex + 1);
+    this.windUniforms = {
+      uWindTime: { value: 0 },
+      uWindDir: { value: new THREE.Vector2(this.windDirection.x, this.windDirection.y) },
+      uWindStrength: { value: this.windStrength }
     };
-    audio.onerror = () => {
-        if (!musicEnabled || !musicState.isRunning) return;
-        playExternalTrack(musicState.currentTrackIndex + 1);
-    };
-    activeMusicAudio = audio;
-    audio.play().catch(() => {
-        // Ignorar autoplay block: en este juego vuelve a intentar en siguiente interaccion.
-    });
-}
 
-function scheduleMusicNote(note, startTime, durationSeconds) {
-    if (!audioCtx || !musicMasterGain) return;
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = "triangle";
-    osc.frequency.value = midiToFrequency(note);
-    gain.gain.setValueAtTime(0.0001, startTime);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.02, musicVolume * 0.45), startTime + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, startTime + durationSeconds * 0.95);
-    osc.connect(gain);
-    gain.connect(musicMasterGain);
-    osc.start(startTime);
-    osc.stop(startTime + durationSeconds);
-}
-
-function musicSchedulerTick() {
-    if (!audioCtx || !musicState.isRunning || !musicEnabled) return;
-    const lookAhead = 0.35;
-    while (musicState.nextNoteTime < audioCtx.currentTime + lookAhead) {
-        const track = musicTracks[musicState.currentTrackIndex];
-        const [midi, beatLen] = track.notes[musicState.noteIndex];
-        const quarter = 60 / track.tempo;
-        const noteDuration = quarter * beatLen;
-        scheduleMusicNote(midi, musicState.nextNoteTime, noteDuration);
-        musicState.nextNoteTime += noteDuration;
-        musicState.noteIndex += 1;
-        if (musicState.noteIndex >= track.notes.length) {
-            musicState.noteIndex = 0;
-            musicState.currentTrackIndex = (musicState.currentTrackIndex + 1) % musicTracks.length;
-        }
-    }
-}
-
-function startBackgroundMusic() {
-    if (!musicEnabled || musicState.isRunning) return;
-    musicState.isRunning = true;
-    setMusicVolume(musicVolume);
-
-    if (musicPlaylist.length > 0) {
-        playExternalTrack(musicState.currentTrackIndex);
-        return;
-    }
-
-    const ctx = ensureAudioContext();
-    if (!ctx || !musicMasterGain) return;
-    musicState.nextNoteTime = ctx.currentTime + 0.05;
-    musicState.timerId = setInterval(musicSchedulerTick, 80);
-}
-
-function stopBackgroundMusic() {
-    musicState.isRunning = false;
-    if (activeMusicAudio) {
-        activeMusicAudio.pause();
-        activeMusicAudio.src = "";
-        activeMusicAudio = null;
-    }
-    if (musicState.timerId) {
-        clearInterval(musicState.timerId);
-        musicState.timerId = null;
-    }
-}
-
-function playSkidSound() {
-    if (!soundEnabled) return;
-    const ctx = ensureAudioContext();
-    if (!ctx) return;
-
-    const duration = 0.16;
-    const now = ctx.currentTime;
-
-    const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
-    const output = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < output.length; i++) {
-        output[i] = (Math.random() * 2 - 1) * 0.45;
-    }
-
-    const source = ctx.createBufferSource();
-    source.buffer = noiseBuffer;
-
-    const band = ctx.createBiquadFilter();
-    band.type = 'bandpass';
-    band.frequency.value = 1800;
-    band.Q.value = 0.7;
-
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.11, now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-
-    source.connect(band);
-    band.connect(gain);
-    gain.connect(ctx.destination);
-
-    source.start(now);
-    source.stop(now + duration);
-}
-
-function rebuildPlayerCar() {
-    const oldPlayer = player;
-    const newPlayer = createCar(playerCarColor, carPolyMultiplier);
-    if (oldPlayer) {
-        newPlayer.position.copy(oldPlayer.position);
-        newPlayer.rotation.copy(oldPlayer.rotation);
-        scene.remove(oldPlayer);
-    } else {
-        // Evita depender de variables de dificultad aun no inicializadas.
-        newPlayer.position.set(0, 0, 5);
-    }
-    scene.add(newPlayer);
-    player = newPlayer;
-}
-
-// Jugador
-let player = null;
-rebuildPlayerCar();
-
-let targetLane = 0;          // carril objetivo (-3, 0, 3)
-let currentLane = 0;         // posiciÃ³n actual interpolada
-let currentLaneVel = 0;      // velocidad lateral para animaciÃ³n suave
-let lanePositions = [-3, 0, 3];
-
-let enemies = [];
-let score = 0;
-let speed = 0.5;
-let isGameOver = true;
-const cheatState = { immortal: false };
-let cheatBuffer = "";
-let elapsedGameTime = 0;
-let worldDistance = 0;
-let currentDifficulty = 1;
-let enemySpawnTimer = 0;
-let treeSpawnTimer = 0;
-let propSpawnTimer = 0;
-let runDistanceSaved = false;
-let leaderboardStatusEl = null;
-let leaderboardBodyEl = null;
-let hudLeaderboardBodyEl = null;
-let playerNameInput = null;
-let nameRequiredMsgEl = null;
-let playerNameLocked = false;
-let leaderboardStream = null;
-let leaderboardPollingTimer = null;
-const baseSpeed = 0.5;
-const minEnemySpawnInterval = 0.25;
-const maxEnemySpawnInterval = 1.4;
-const treeSpawnInterval = 0.2;
-const propSpawnInterval = 0.55;
-const baseTrackDifficulty = 0.45; // Intensidad base de la pista
-const maxTrackDifficulty = 2.35; // Tope para evitar curvas absurdas
-const difficultyGrowthPerSecond = 0.02; // +1x cada 50s aprox
-const maxDifficultyMultiplier = 6.0;
-
-function updateCheatStatusUI() {
-    const el = document.getElementById("cheat-status");
-    if (!el) return;
-    el.textContent = cheatState.immortal ? "INMORTALIDAD" : "OFF";
-    el.style.color = cheatState.immortal ? "#66ff66" : "#ffffff";
-}
-
-function toggleImmortality() {
-    cheatState.immortal = !cheatState.immortal;
-    updateCheatStatusUI();
-}
-
-function handleCheatInput(key) {
-    if (key.length !== 1) return;
-    cheatBuffer = (cheatBuffer + key.toLowerCase()).slice(-24);
-    if (cheatBuffer.includes("inmortal")) {
-        toggleImmortality();
-        cheatBuffer = "";
-    }
-}
-
-function getPlayerName() {
-    const raw = (playerNameInput?.value || "").trim();
-    return raw.slice(0, 16);
-}
-
-function getPlayerNameKey(name) {
-    return name
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9_-]/g, "_")
-        .replace(/_+/g, "_")
-        .replace(/^_+|_+$/g, "")
-        .slice(0, 24) || "jugador";
-}
-
-function hasValidPlayerName() {
-    return getPlayerName().length > 0;
-}
-
-function applyPlayerNameLockState() {
-    if (!playerNameInput) return;
-    playerNameInput.disabled = playerNameLocked;
-    playerNameInput.title = playerNameLocked
-        ? "El nombre ya fue definido y no se puede cambiar."
-        : "Puedes cambiar el nombre una sola vez.";
-}
-
-function lockPlayerName() {
-    playerNameLocked = true;
-    localStorage.setItem("player_name_locked", "true");
-    applyPlayerNameLockState();
-}
-
-function setNameRequiredMessage(visible, message = "Ingresa un usuario en el menu para iniciar.") {
-    if (!nameRequiredMsgEl) return;
-    nameRequiredMsgEl.textContent = message;
-    nameRequiredMsgEl.classList.toggle("show", visible);
-}
-
-function setLeaderboardStatus(text) {
-    if (!leaderboardStatusEl) return;
-    leaderboardStatusEl.textContent = text;
-}
-
-function renderLeaderboardRows(entries) {
-    const targets = [leaderboardBodyEl, hudLeaderboardBodyEl].filter(Boolean);
-    if (!targets.length) return;
-
-    targets.forEach((target) => {
-        target.innerHTML = "";
-        if (!entries.length) {
-            const row = document.createElement("tr");
-            row.innerHTML = "<td colspan=\"3\">Sin datos aun</td>";
-            target.appendChild(row);
-            return;
-        }
-
-        entries.forEach((entry, index) => {
-            const row = document.createElement("tr");
-            const name = String(entry.name || "Jugador").slice(0, 16);
-            const distance = Number(entry.distance || 0);
-            row.innerHTML = `<td>${index + 1}</td><td>${name}</td><td>${distance}</td>`;
-            target.appendChild(row);
-        });
-    });
-}
-
-async function loadLeaderboard() {
-    try {
-        setLeaderboardStatus("Cargando tabla...");
-        const url = `${FIREBASE_DB_URL}/${LEADERBOARD_NODE}.json`;
-        const response = await fetch(url, { method: "GET" });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        const rows = Object.values(data || {}).filter((item) =>
-            item && typeof item === "object" && item.name != null && item.distance != null
+    this.leafMaterial.onBeforeCompile = (shader) => {
+      shader.uniforms.uWindTime = this.windUniforms.uWindTime;
+      shader.uniforms.uWindDir = this.windUniforms.uWindDir;
+      shader.uniforms.uWindStrength = this.windUniforms.uWindStrength;
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+          uniform float uWindTime;
+          uniform vec2 uWindDir;
+          uniform float uWindStrength;
+          `
+        )
+        .replace(
+          "#include <begin_vertex>",
+          `#include <begin_vertex>
+          float bend = clamp(position.y / 14.0, 0.0, 1.0);
+          float gust = sin(uWindTime * 1.75 + position.x * 0.9 + position.z * 0.7) * 0.65;
+          gust += sin(uWindTime * 3.2 + position.x * 2.1 + position.z * 1.8) * 0.35;
+          float sway = gust * uWindStrength * bend;
+          transformed.xz += uWindDir * sway;
+          `
         );
-
-        // Deduplica por usuario para evitar miles de entradas repetidas del mismo nombre.
-        const bestByUser = new Map();
-        for (const row of rows) {
-            const name = String(row.name || "Jugador").slice(0, 16);
-            const nameKey = getPlayerNameKey(name);
-            const distance = Number(row.distance || 0);
-            const score = Number(row.score || 0);
-            const createdAt = Number(row.createdAt || 0);
-            const candidate = { name, distance, score, createdAt };
-            const prev = bestByUser.get(nameKey);
-            if (!prev || candidate.distance > prev.distance || (candidate.distance === prev.distance && candidate.createdAt > prev.createdAt)) {
-                bestByUser.set(nameKey, candidate);
-            }
-        }
-
-        const top = Array.from(bestByUser.values())
-            .sort((a, b) => Number(b.distance || 0) - Number(a.distance || 0))
-            .slice(0, 10);
-        renderLeaderboardRows(top);
-        setLeaderboardStatus(top.length ? "Top 10 global" : "Sin registros");
-    } catch (error) {
-        console.error("No se pudo cargar la tabla:", error);
-        setLeaderboardStatus("No se pudo cargar la tabla");
-        renderLeaderboardRows([]);
-    }
-}
-
-function stopLeaderboardRealtime() {
-    if (leaderboardStream) {
-        leaderboardStream.close();
-        leaderboardStream = null;
-    }
-    if (leaderboardPollingTimer) {
-        clearInterval(leaderboardPollingTimer);
-        leaderboardPollingTimer = null;
-    }
-}
-
-function startLeaderboardPolling() {
-    if (leaderboardPollingTimer) return;
-    leaderboardPollingTimer = setInterval(() => {
-        loadLeaderboard();
-    }, 7000);
-}
-
-function startLeaderboardRealtime() {
-    stopLeaderboardRealtime();
-    const streamUrl = `${FIREBASE_DB_URL}/${LEADERBOARD_NODE}.json`;
-
-    try {
-        leaderboardStream = new EventSource(streamUrl);
-    } catch (error) {
-        console.warn("EventSource no disponible, usando polling:", error);
-        startLeaderboardPolling();
-        return;
-    }
-
-    const refresh = () => loadLeaderboard();
-    leaderboardStream.addEventListener("put", refresh);
-    leaderboardStream.addEventListener("patch", refresh);
-    leaderboardStream.onerror = () => {
-        if (leaderboardStream) {
-            leaderboardStream.close();
-            leaderboardStream = null;
-        }
-        startLeaderboardPolling();
     };
-}
+    this.leafMaterial.customProgramCacheKey = () => "leaf-wind-v1";
+  }
 
-async function saveRunDistance(distance, runScore) {
-    try {
-        const playerName = getPlayerName() || "Jugador";
-        const playerKey = getPlayerNameKey(playerName);
-        const entryUrl = `${FIREBASE_DB_URL}/${LEADERBOARD_NODE}/${playerKey}.json`;
-        const currentResponse = await fetch(entryUrl, { method: "GET" });
-        if (!currentResponse.ok) throw new Error(`HTTP ${currentResponse.status}`);
-        const currentEntry = await currentResponse.json();
+  _key(cx, cz) {
+    return `${cx},${cz}`;
+  }
 
-        const nextDistance = Math.max(0, Math.floor(distance));
-        const nextScore = Math.max(0, Math.floor(runScore));
-        const currentDistance = Number(currentEntry?.distance || 0);
-        if (currentEntry && nextDistance <= currentDistance) {
-            setLeaderboardStatus("No superaste tu mejor distancia");
-            await loadLeaderboard();
-            return;
-        }
+  _forestDensityAt(x, z) {
+    const broad = hash2(x * 0.0013, z * 0.0013);
+    const medium = hash2(x * 0.0058 + 17.1, z * 0.0058 + 9.4);
+    const local = hash2(x * 0.022 + 3.8, z * 0.022 + 5.1);
+    const density = broad * 0.55 + medium * 0.35 + local * 0.1;
+    return Math.max(0, Math.min(1, density));
+  }
 
-        const payload = {
-            name: playerName,
-            distance: nextDistance,
-            score: nextScore,
-            createdAt: Date.now()
-        };
-        const response = await fetch(entryUrl, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        setLeaderboardStatus("Guardado");
-        await loadLeaderboard();
-    } catch (error) {
-        console.error("No se pudo guardar distancia:", error);
-        setLeaderboardStatus("Error guardando datos");
-    }
-}
+  _createTree(seedA, seedB) {
+    const tree = new this.THREE.Group();
+    const trunkHeight = 7.4 + seedA * 4.2;
+    const trunkRadius = 0.24 + seedB * 0.14;
 
-function getDifficultyMultiplier() {
-    // Crecimiento lineal controlado (sin escalada exponencial).
-    return Math.min(maxDifficultyMultiplier, 1 + elapsedGameTime * difficultyGrowthPerSecond);
-}
-
-function getEnemySpawnInterval() {
-    const interval = maxEnemySpawnInterval / Math.pow(currentDifficulty, 0.85);
-    return THREE.MathUtils.clamp(interval, minEnemySpawnInterval, maxEnemySpawnInterval);
-}
-
-function getRoadCenterAtZ(z) {
-    const trackDifficulty = THREE.MathUtils.clamp(currentDifficulty + baseTrackDifficulty, 1, maxTrackDifficulty);
-    const curveAmp = 0.75 + (trackDifficulty - 1) * 0.82;
-    const d = worldDistance - z * 0.9;
-    return Math.sin(d * 0.035) * curveAmp + Math.sin(d * 0.013 + 1.4) * curveAmp * 0.6;
-}
-
-function getRoadHeightAtZ(z) {
-    const trackDifficulty = THREE.MathUtils.clamp(currentDifficulty + baseTrackDifficulty, 1, maxTrackDifficulty);
-    const hillAmp = 0.06 + (trackDifficulty - 1) * 0.12;
-    const d = worldDistance - z;
-    return Math.sin(d * 0.022) * hillAmp + Math.sin(d * 0.009 + 2.2) * hillAmp * 0.8;
-}
-
-function getRoadBankAtZ(z) {
-    const x1 = getRoadCenterAtZ(z + 2);
-    const x0 = getRoadCenterAtZ(z - 2);
-    return THREE.MathUtils.clamp((x1 - x0) * 0.18, -0.14, 0.14);
-}
-
-function getRoadPitchAtZ(z) {
-    const y1 = getRoadHeightAtZ(z + 2);
-    const y0 = getRoadHeightAtZ(z - 2);
-    return THREE.MathUtils.clamp((y1 - y0) * 0.3, -0.1, 0.1);
-}
-
-function spawnEnemy() {
-    if (isGameOver) return;
-    let wreckedCar = createWreckedCar();
-    const lane = lanePositions[Math.floor(Math.random() * lanePositions.length)];
-    const spawnZ = -85;
-    wreckedCar.userData.lane = lane;
-    wreckedCar.userData.baseRotX = wreckedCar.rotation.x;
-    wreckedCar.userData.baseRotY = wreckedCar.rotation.y;
-    wreckedCar.userData.baseRotZ = wreckedCar.rotation.z;
-    wreckedCar.position.set(
-        lane + getRoadCenterAtZ(spawnZ),
-        getRoadHeightAtZ(spawnZ),
-        spawnZ
+    const trunk = new this.THREE.Mesh(
+      new this.THREE.CylinderGeometry(trunkRadius * 0.75, trunkRadius, trunkHeight, 10),
+      this.trunkMaterial
     );
-    scene.add(wreckedCar);
-    enemies.push(wreckedCar);
+    trunk.position.y = trunkHeight * 0.5;
+    trunk.castShadow = true;
+    trunk.receiveShadow = true;
+    tree.add(trunk);
+
+    const crownBaseH = 4.2 + seedB * 2.0;
+    const crownBaseR = 2.4 + seedA * 1.0;
+    const crownBase = new this.THREE.Mesh(
+      new this.THREE.ConeGeometry(crownBaseR, crownBaseH, 12),
+      this.leafMaterial
+    );
+    crownBase.position.y = trunkHeight + crownBaseH * 0.42;
+    crownBase.castShadow = true;
+    crownBase.receiveShadow = true;
+    tree.add(crownBase);
+
+    const crownMid = new this.THREE.Mesh(
+      new this.THREE.ConeGeometry(crownBaseR * 0.78, crownBaseH * 0.85, 12),
+      this.leafMaterial
+    );
+    crownMid.position.y = trunkHeight + crownBaseH * 0.84;
+    crownMid.castShadow = true;
+    tree.add(crownMid);
+
+    const crownTop = new this.THREE.Mesh(
+      new this.THREE.ConeGeometry(crownBaseR * 0.5, crownBaseH * 0.65, 12),
+      this.leafMaterial
+    );
+    crownTop.position.y = trunkHeight + crownBaseH * 1.17;
+    crownTop.castShadow = true;
+    tree.add(crownTop);
+
+    return tree;
+  }
+
+  _buildCell(cx, cz) {
+    const group = new this.THREE.Group();
+    const cellCenterX = cx * this.cellSize;
+    const cellCenterZ = cz * this.cellSize;
+    const centerDensity = this._forestDensityAt(cellCenterX, cellCenterZ);
+    const clearMask = hash2(cx * 0.47 + 10.2, cz * 0.63 + 11.1);
+    const sparseMultiplier = clearMask > 0.83 ? 0.28 : 1.0;
+    const minTrees = 8;
+    const maxTrees = 38;
+    const treeCount = Math.floor((minTrees + centerDensity * (maxTrees - minTrees)) * sparseMultiplier);
+    const half = this.cellSize * 0.5;
+
+    for (let i = 0; i < treeCount; i++) {
+      const rx = hash2(cx * 17.7 + i * 11.3, cz * 13.1 + i * 5.2);
+      const rz = hash2(cx * 9.4 + i * 7.1, cz * 19.5 + i * 3.4);
+      const x = cx * this.cellSize + (rx * 2 - 1) * half;
+      const z = cz * this.cellSize + (rz * 2 - 1) * half;
+      const y = this.terrainManager.getHeightAt(x, z);
+      if (y < -2) continue;
+
+      const localDensity = this._forestDensityAt(x, z);
+      if (localDensity < 0.22 && hash2(x * 0.11, z * 0.11) > 0.35) continue;
+
+      const seedA = hash2(cx * 21.3 + i, cz * 8.7 + i * 2.0);
+      const seedB = hash2(cx * 3.2 + i * 2.5, cz * 4.1 + i * 1.3);
+      const tree = this._createTree(seedA, seedB);
+      tree.position.set(x, y, z);
+      tree.rotation.y = hash2(x * 0.08 + 3.0, z * 0.08 + 2.0) * Math.PI * 2;
+      group.add(tree);
+    }
+
+    this.scene.add(group);
+    this.chunks.set(this._key(cx, cz), group);
+  }
+
+  _removeCell(key) {
+    const group = this.chunks.get(key);
+    if (!group) return;
+    this.scene.remove(group);
+    group.traverse((obj) => {
+      if (obj.isMesh && obj.geometry) obj.geometry.dispose();
+    });
+    this.chunks.delete(key);
+  }
+
+  update(targetPosition, timeSec) {
+    const cx = Math.floor(targetPosition.x / this.cellSize);
+    const cz = Math.floor(targetPosition.z / this.cellSize);
+    const needed = new Set();
+
+    for (let dz = -this.viewRadius; dz <= this.viewRadius; dz++) {
+      for (let dx = -this.viewRadius; dx <= this.viewRadius; dx++) {
+        const nx = cx + dx;
+        const nz = cz + dz;
+        const key = this._key(nx, nz);
+        needed.add(key);
+        if (!this.chunks.has(key)) this._buildCell(nx, nz);
+      }
+    }
+
+    for (const key of this.chunks.keys()) {
+      if (!needed.has(key)) this._removeCell(key);
+    }
+
+    this.windUniforms.uWindTime.value = timeSec;
+  }
 }
 
-function startGame() {
-    if (!hasValidPlayerName()) {
-        setNameRequiredMessage(true);
-        setMenuOpen(true);
-        return;
-    }
-    if (!playerNameLocked) {
-        localStorage.setItem("player_name", getPlayerName());
-        lockPlayerName();
-    }
-    setNameRequiredMessage(false);
-    startBackgroundMusic();
-    isGameOver = false;
-    clock = new THREE.Clock(); // Resetear reloj para evitar saltos temporales
-    document.getElementById("start-screen").style.display = "none";
-    document.getElementById("game-over-screen").style.display = "none";
-    score = 0;
-    speed = baseSpeed;
-    elapsedGameTime = 0;
-    worldDistance = 0;
-    currentDifficulty = 1;
-    runDistanceSaved = false;
-    enemySpawnTimer = 0.2;
-    treeSpawnTimer = 0.05;
-    propSpawnTimer = 0.25;
-    document.getElementById("score").textContent = score;
-    document.getElementById("difficulty").textContent = "1.00x";
-    updateCheatStatusUI();
+function findRandomSpawn() {
+  const maxTries = 120;
+  const radiusMin = 90;
+  const radiusMax = 620;
+  for (let i = 0; i < maxTries; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = radiusMin + Math.random() * (radiusMax - radiusMin);
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+    const y = terrainManager.getHeightAt(x, z);
 
-    // Limpiar enemigos y Ã¡rboles existentes
-    enemies.forEach(e => scene.remove(e));
-    enemies = [];
-    trees.forEach(t => scene.remove(t));
-    trees = [];
-    mapProps.forEach(p => scene.remove(p));
-    mapProps.length = 0;
-    skidParticles.forEach(p => scene.remove(p));
-    skidParticles.length = 0;
-    speedLines.forEach(s => scene.remove(s));
-    speedLines.length = 0;
-    speedLineSpawnAccumulator = 0;
+    const nearbyA = terrainManager.getHeightAt(x + 3, z);
+    const nearbyB = terrainManager.getHeightAt(x - 3, z);
+    const nearbyC = terrainManager.getHeightAt(x, z + 3);
+    const nearbyD = terrainManager.getHeightAt(x, z - 3);
+    const slope =
+      Math.max(Math.abs(y - nearbyA), Math.abs(y - nearbyB), Math.abs(y - nearbyC), Math.abs(y - nearbyD));
 
-    for (let i = 0; i < 34; i++) {
-        const side = Math.random() > 0.5 ? 1 : -1;
-        const offset = 6.8 + Math.random() * 12.5;
-        const z = -20 - Math.random() * 130;
-        const tree = new THREE.Sprite(treeMat);
-        tree.scale.set(4, 4, 1);
-        tree.userData.side = side;
-        tree.userData.offset = offset;
-        tree.position.set(getRoadCenterAtZ(z) + side * offset, getRoadHeightAtZ(z) + 2, z);
-        tree.center.set(0.5, 0.0);
-        scene.add(tree);
-        trees.push(tree);
-    }
+    const validHeight = y > -5 && y < 120;
+    const validSlope = slope < 2.8;
+    if (validHeight && validSlope) return new THREE.Vector3(x, y, z);
+  }
 
-    for (let i = 0; i < 26; i++) {
-        spawnMapProp(-22 - Math.random() * 145);
-    }
-
-    for (let i = 0; i < roadsideCliffs.length; i++) {
-        const band = Math.floor(i / 2);
-        resetRoadsideCliffSegment(roadsideCliffs[i], -24 - band * 18 - Math.random() * 12);
-    }
-
-    // Reiniciar posiciÃ³n jugador
-    player.position.set(0, getRoadHeightAtZ(5), 5);
-    targetLane = 0;
-    currentLane = 0;
-    currentLaneVel = 0;
-    camera.position.set(0, 5, 10);
-    camera.rotation.set(0, 0, 0);
-
-    // Reiniciar loop si es necesario (evitar duplicados)
-    // En este diseÃ±o simple, el requestAnimationFrame sigue corriendo pero podemos filtrar update
+  const fallbackY = terrainManager.getHeightAt(0, 0);
+  return new THREE.Vector3(0, fallbackY, 0);
 }
 
-function stopGame() {
-    isGameOver = true;
-    document.getElementById("game-over-screen").style.display = "flex";
-    document.getElementById("final-score").textContent = score;
-    if (!runDistanceSaved) {
-        runDistanceSaved = true;
-        saveRunDistance(worldDistance, score);
-    }
-}
+const spawnPoint = findRandomSpawn();
+terrainManager.update(spawnPoint);
+player.position.copy(spawnPoint);
+const treeManager = new TreeChunkManager({ THREE, scene, terrainManager });
+treeManager.update(spawnPoint, 0);
 
-function update() {
-    requestAnimationFrame(update);
-    let dt = clock.getDelta();
-    updateSun(dt);
-    if (isGameOver) {
-        composer.render();
-        return;
-    }
-
-    elapsedGameTime += dt;
-    currentDifficulty = getDifficultyMultiplier();
-    speed = baseSpeed + 0.08 * (currentDifficulty - 1);
-    document.getElementById("difficulty").textContent = `${currentDifficulty.toFixed(2)}x`;
-    const speedNorm = THREE.MathUtils.clamp((speed - baseSpeed) / 2.8, 0, 1);
-    const frameScale = dt * 60;
-    const movementStep = speed * frameScale;
-    worldDistance += movementStep;
-
-    const targetFov = THREE.MathUtils.lerp(baseCameraFov, maxCameraFov, speedNorm);
-    camera.fov += (targetFov - camera.fov) * 0.08;
-    camera.updateProjectionMatrix();
-
-    enemySpawnTimer -= dt;
-    while (enemySpawnTimer <= 0) {
-        spawnEnemy();
-        enemySpawnTimer += getEnemySpawnInterval();
-    }
-
-    treeSpawnTimer -= dt;
-    while (treeSpawnTimer <= 0) {
-        spawnTree();
-        treeSpawnTimer += treeSpawnInterval;
-    }
-
-    propSpawnTimer -= dt;
-    while (propSpawnTimer <= 0) {
-        spawnMapProp();
-        propSpawnTimer += propSpawnInterval;
-    }
-
-    const roadVisualZ = -35;
-    const roadVisualCenter = getRoadCenterAtZ(roadVisualZ) * 0.85;
-    const roadVisualBank = getRoadBankAtZ(roadVisualZ);
-    const roadVisualPitch = getRoadPitchAtZ(roadVisualZ);
-
-    road.position.x = roadVisualCenter;
-    leftLine.position.x = roadVisualCenter - 5;
-    rightLine.position.x = roadVisualCenter + 5;
-    centerLineLeft.position.x = roadVisualCenter - 1.66;
-    centerLineRight.position.x = roadVisualCenter + 1.66;
-
-    road.rotation.x = -Math.PI / 2 + roadVisualPitch * 0.2;
-    leftLine.rotation.x = -Math.PI / 2 + roadVisualPitch * 0.2;
-    rightLine.rotation.x = -Math.PI / 2 + roadVisualPitch * 0.2;
-    centerLineLeft.rotation.x = -Math.PI / 2 + roadVisualPitch * 0.2;
-    centerLineRight.rotation.x = -Math.PI / 2 + roadVisualPitch * 0.2;
-
-    road.rotation.z = -roadVisualBank * 0.9;
-    leftLine.rotation.z = -roadVisualBank * 0.9;
-    rightLine.rotation.z = -roadVisualBank * 0.9;
-    centerLineLeft.rotation.z = -roadVisualBank * 0.9;
-    centerLineRight.rotation.z = -roadVisualBank * 0.9;
-
-    // Movimiento de texturas para reforzar sensaciÃ³n de velocidad
-    if (roadMat.map) roadMat.map.offset.y += movementStep * 0.1;
-    dashTex.offset.y += movementStep * 0.1; // Mover las lÃ­neas discontinuas tambiÃ©n
-
-    // Mover textura del cÃ©sped para sensaciÃ³n de velocidad
-    if (grassMat.map) grassMat.map.offset.y += movementStep * 0.1;
-
-    // Animacion lateral tipo resorte (acelera/frena suave)
-    const laneDelta = targetLane - currentLane;
-    const laneAccel = laneDelta * 36 - currentLaneVel * 10.5;
-    currentLaneVel += laneAccel * dt;
-    currentLane += currentLaneVel * dt;
-    currentLane = THREE.MathUtils.clamp(currentLane, lanePositions[0], lanePositions[lanePositions.length - 1]);
-    if (Math.abs(laneDelta) < 0.03 && Math.abs(currentLaneVel) < 0.08) {
-        currentLane = targetLane;
-        currentLaneVel = 0;
-    }
-    const playerRoadCenter = getRoadCenterAtZ(player.position.z);
-    const playerRoadHeight = getRoadHeightAtZ(player.position.z);
-    const playerRoadBank = getRoadBankAtZ(player.position.z);
-    const playerRoadPitch = getRoadPitchAtZ(player.position.z);
-    player.position.x = currentLane + playerRoadCenter;
-    player.position.y = playerRoadHeight;
-    player.rotation.x = playerRoadPitch * 0.8 + Math.min(0.06, Math.abs(currentLaneVel) * 0.03);
-
-    // Inclinacion y guiÃ±ada segun velocidad lateral
-    const lateralLean = THREE.MathUtils.clamp(-currentLaneVel * 0.32 - laneDelta * 0.16, -0.52, 0.52);
-    player.rotation.z = lateralLean - playerRoadBank * 0.9;
-    player.rotation.y = THREE.MathUtils.clamp(-currentLaneVel * 0.12, -0.26, 0.26);
-
-    const camTargetX = getRoadCenterAtZ(8) * 0.75;
-    const camTargetY = 5 + getRoadHeightAtZ(8) * 1.2;
-    const camRoll = -getRoadBankAtZ(8) * 0.35;
-    const speedShake = speedNorm * 0.08;
-    camera.position.x += (camTargetX - camera.position.x) * 0.06;
-    camera.position.y += (camTargetY + Math.sin(elapsedGameTime * 20) * speedShake - camera.position.y) * 0.06;
-    camera.rotation.z += (camRoll - camera.rotation.z) * 0.05;
-    camera.lookAt(getRoadCenterAtZ(-12) * 0.8, getRoadHeightAtZ(-12) + 0.6, -8);
-
-    speedLineSpawnAccumulator += dt * (1 + speedNorm * 50);
-    const playerRoadCenterNow = getRoadCenterAtZ(player.position.z);
-    while (speedLineSpawnAccumulator >= 1) {
-        spawnSpeedLine(playerRoadCenterNow, speedNorm);
-        speedLineSpawnAccumulator -= 1;
-    }
-
-    for (let i = skidParticles.length - 1; i >= 0; i--) {
-        const particle = skidParticles[i];
-        particle.position.x += particle.userData.vx;
-        particle.position.y += particle.userData.vy;
-        particle.position.z += movementStep + particle.userData.vz;
-        particle.userData.life -= dt;
-        particle.material.opacity = Math.max(0, particle.userData.life * 2);
-
-        if (particle.userData.life <= 0 || particle.position.z > 20) {
-            scene.remove(particle);
-            skidParticles.splice(i, 1);
-        }
-    }
-
-    for (let i = speedLines.length - 1; i >= 0; i--) {
-        const line = speedLines[i];
-        line.position.x += line.userData.vx;
-        line.position.z += movementStep + line.userData.vz;
-        line.userData.life -= dt;
-        line.material.opacity = Math.max(0, line.userData.life * 1.6);
-        if (line.userData.life <= 0 || line.position.z > 22) {
-            scene.remove(line);
-            speedLines.splice(i, 1);
-        }
-    }
-
-    for (let i = enemies.length - 1; i >= 0; i--) {
-        const car = enemies[i];
-        car.position.z += movementStep;
-        car.position.x = car.userData.lane + getRoadCenterAtZ(car.position.z);
-        car.position.y = getRoadHeightAtZ(car.position.z);
-        car.rotation.x = car.userData.baseRotX + getRoadPitchAtZ(car.position.z) * 0.6;
-        car.rotation.y = car.userData.baseRotY;
-        car.rotation.z = car.userData.baseRotZ - getRoadBankAtZ(car.position.z) * 0.7;
-
-        if (car.position.distanceTo(player.position) < 1.8) {
-            if (cheatState.immortal) {
-                scene.remove(car);
-                enemies.splice(i, 1);
-                score++;
-                document.getElementById("score").textContent = score;
-                continue;
-            }
-            stopGame();
-        }
-        // Resetear enemigos si salen del mapa
-        if (car.position.z > 20) {
-            scene.remove(car);
-            enemies.splice(i, 1);
-            score++;
-            document.getElementById("score").textContent = score;
-        }
-    }
-
-    // Mover y limpiar Ã¡rboles
-    for (let i = trees.length - 1; i >= 0; i--) {
-        const tree = trees[i];
-        tree.position.z += movementStep; // Misma velocidad que la carretera
-        const side = tree.userData.side ?? (Math.random() > 0.5 ? 1 : -1);
-        const offset = tree.userData.offset ?? (6.8 + Math.random() * 12.5);
-        tree.position.x = getRoadCenterAtZ(tree.position.z) + side * offset;
-        tree.position.y = getRoadHeightAtZ(tree.position.z) + 2;
-        if (tree.position.z > 24) {
-            scene.remove(tree);
-            trees.splice(i, 1);
-        }
-    }
-
-    for (let i = mapProps.length - 1; i >= 0; i--) {
-        const prop = mapProps[i];
-        prop.position.z += movementStep;
-        const side = prop.userData.side ?? 1;
-        const offset = prop.userData.offset ?? 10;
-        const baseY = prop.userData.baseY ?? 0;
-        const kind = prop.userData.kind ?? "rock";
-        const bank = getRoadBankAtZ(prop.position.z);
-        prop.position.x = getRoadCenterAtZ(prop.position.z) + side * offset;
-        prop.position.y = getRoadHeightAtZ(prop.position.z) + baseY;
-        prop.rotation.y += prop.userData.spin ?? 0;
-        prop.rotation.z = -bank * (kind === "giant_rock" ? 0.12 : 0.25);
-        if (prop.position.z > 22) {
-            scene.remove(prop);
-            mapProps.splice(i, 1);
-        }
-    }
-
-    for (let i = 0; i < roadsideCliffs.length; i++) {
-        const cliff = roadsideCliffs[i];
-        cliff.position.z += movementStep;
-        if (cliff.position.z > 38) {
-            resetRoadsideCliffSegment(cliff, -340 - Math.random() * 120);
-        }
-
-        const side = cliff.userData.side ?? 1;
-        const offset = cliff.userData.offset ?? 34;
-        const baseY = cliff.userData.baseY ?? 7;
-        const bank = getRoadBankAtZ(cliff.position.z);
-        cliff.position.x = getRoadCenterAtZ(cliff.position.z) + side * offset;
-        cliff.position.y = getRoadHeightAtZ(cliff.position.z) + baseY;
-        cliff.rotation.y += cliff.userData.spin ?? 0;
-        cliff.rotation.z = -bank * 0.42 + side * 0.03;
-    }
-
-    composer.render();
-}
-
-// Render inicial para mostrar la escena
-initPostProcessing();
-composer.render();
-
-// Hacer funciones globales para que el HTML pueda acceder a ellas (al usar mÃ³dulos)
-window.startGame = startGame;
-window.moveLeft = moveLeft;
-window.moveRight = moveRight;
-
-document.getElementById("start-btn").addEventListener("click", startGame);
-document.getElementById("restart-btn").addEventListener("click", startGame);
-
-// Cambio de carril
-function moveLeft() {
-    let i = lanePositions.indexOf(targetLane);
-    if (i > 0) {
-        targetLane = lanePositions[i - 1];
-        currentLaneVel -= 0.9;
-        playSkidSound();
-        spawnSkidParticles(-1);
-    }
-}
-
-function moveRight() {
-    let i = lanePositions.indexOf(targetLane);
-    if (i < lanePositions.length - 1) {
-        targetLane = lanePositions[i + 1];
-        currentLaneVel += 0.9;
-        playSkidSound();
-        spawnSkidParticles(1);
-    }
-}
-
-document.addEventListener("keydown", e => {
-    if (e.key === "ArrowLeft") moveLeft();
-    if (e.key === "ArrowRight") moveRight();
-    if (e.key === "F8") toggleImmortality();
-    handleCheatInput(e.key);
+const inputController = createInputController();
+const cameraController = new ThirdPersonCameraController({ THREE, camera, target: player, domElement: renderer.domElement });
+const movementController = new CharacterMovementController({
+  THREE,
+  character: player,
+  getGroundHeightAt: (x, z) => terrainManager.getHeightAt(x, z)
 });
+const animationController = new CharacterAnimationController({ THREE, parts: playerParts });
 
-const leftBtn = document.getElementById("left");
-const rightBtn = document.getElementById("right");
-const menuToggleBtn = document.getElementById("menu-toggle");
-const menuCloseBtn = document.getElementById("menu-close");
-const menuOverlay = document.getElementById("menu-overlay");
-const sideMenu = document.getElementById("side-menu");
-const touchControlsToggle = document.getElementById("touch-controls-toggle");
-const soundToggle = document.getElementById("sound-toggle");
-const musicToggle = document.getElementById("music-toggle");
-const musicVolumeSlider = document.getElementById("music-volume-slider");
-const menuRestartBtn = document.getElementById("menu-restart-btn");
-const autoGraphicsToggle = document.getElementById("auto-graphics-toggle");
-const carPolySlider = document.getElementById("car-poly-slider");
-playerNameInput = document.getElementById("player-name");
-nameRequiredMsgEl = document.getElementById("name-required-msg");
-leaderboardStatusEl = document.getElementById("leaderboard-status");
-leaderboardBodyEl = document.getElementById("leaderboard-body");
-hudLeaderboardBodyEl = document.getElementById("hud-leaderboard-body");
+const clock = new THREE.Clock();
+let worldTime = 0;
+const dayDurationSec = 240;
+const dayFogColor = new THREE.Color(0x9bbce2);
+const duskFogColor = new THREE.Color(0xa96b52);
+const nightFogColor = new THREE.Color(0x0a1220);
+const hemiDayColor = new THREE.Color(0x9cbfff);
+const hemiNightColor = new THREE.Color(0x5f79b8);
+const hemiGroundDayColor = new THREE.Color(0x3f362b);
+const hemiGroundNightColor = new THREE.Color(0x181a26);
+const tmpSunDir = new THREE.Vector3();
+const tmpMoonDir = new THREE.Vector3();
+const tmpTerrainDir = new THREE.Vector3();
+const tmpFog = new THREE.Color();
+const tmpFlashOffset = new THREE.Vector3();
+const tmpFlashForward = new THREE.Vector3();
 
-function bindControlButton(button, moveFn) {
-    button.addEventListener("touchstart", (event) => {
-        // Evita el "doble tap" sintÃ©tico (touch + mouse/click) en Android.
-        event.preventDefault();
-        moveFn();
-    }, { passive: false });
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  worldTime += dt;
 
-    button.addEventListener("mousedown", moveFn);
+  const phase = (worldTime % dayDurationSec) / dayDurationSec;
+  const sunOrbit = phase * Math.PI * 2 - Math.PI * 0.5;
+  const sunX = Math.cos(sunOrbit) * 180;
+  const sunY = Math.sin(sunOrbit) * 155;
+  const sunZ = Math.sin(sunOrbit * 0.4) * 110 - 95;
+  const moonX = -sunX;
+  const moonY = -sunY;
+  const moonZ = -sunZ;
+
+  const dayFactor = THREE.MathUtils.clamp((sunY + 20) / 95, 0, 1);
+  const nightFactor = THREE.MathUtils.clamp((-sunY + 18) / 85, 0, 1);
+  const twilightFactor = THREE.MathUtils.clamp(1 - Math.abs(sunY) / 55, 0, 1) * (1 - dayFactor * 0.65);
+  const flashlightNight = THREE.MathUtils.smoothstep(nightFactor, 0.32, 0.95);
+
+  sunCore.position.set(sunX, sunY, sunZ);
+  moonCore.position.set(moonX, moonY, moonZ);
+  sunGlow.position.copy(sunCore.position);
+  moonGlow.position.copy(moonCore.position);
+  sunGlow.lookAt(camera.position);
+  moonGlow.lookAt(camera.position);
+  sunLight.position.set(sunX * 0.38, Math.max(8, sunY * 0.62), 54);
+  sunLight.intensity = 0.06 + dayFactor * 1.28 + twilightFactor * 0.28;
+  hemi.intensity = 0.12 + dayFactor * 0.5 + twilightFactor * 0.18 + nightFactor * 0.08;
+  hemi.color.copy(hemiDayColor).lerp(hemiNightColor, nightFactor * 0.75);
+  hemi.groundColor.copy(hemiGroundDayColor).lerp(hemiGroundNightColor, nightFactor * 0.8);
+
+  tmpSunDir.set(sunX, sunY, sunZ).normalize();
+  tmpMoonDir.set(moonX, moonY, moonZ).normalize();
+  tmpTerrainDir.copy(tmpSunDir).lerp(tmpMoonDir, nightFactor * 0.9).normalize();
+  terrainManager.setSunDirection(tmpTerrainDir);
+  sunGlowUniforms.uTime.value = worldTime;
+  sunGlowUniforms.uIntensity.value = 0.1 + dayFactor * 0.9 + twilightFactor * 0.4;
+  moonGlow.material.uniforms.uTime.value = worldTime;
+  moonGlow.material.uniforms.uIntensity.value = 0.08 + nightFactor * 0.9;
+  sunCore.visible = dayFactor > 0.02 || twilightFactor > 0.2;
+  sunGlow.visible = sunCore.visible;
+  moonCore.visible = nightFactor > 0.05 || twilightFactor > 0.25;
+  moonGlow.visible = moonCore.visible;
+
+  skyUniforms.uSunDir.value.copy(tmpSunDir);
+  skyUniforms.uMoonDir.value.copy(tmpMoonDir);
+  skyUniforms.uDayFactor.value = dayFactor;
+  skyUniforms.uTwilightFactor.value = twilightFactor;
+  skyUniforms.uNightFactor.value = nightFactor;
+  skyUniforms.uTime.value = worldTime;
+
+  tmpFog.copy(nightFogColor).lerp(dayFogColor, dayFactor).lerp(duskFogColor, twilightFactor * 0.8);
+  scene.fog.color.copy(tmpFog);
+  skyDome.position.copy(camera.position);
+
+  tmpFlashOffset.set(0.0, 1.9, 0.14).applyQuaternion(player.quaternion);
+  flashlight.position.copy(player.position).add(tmpFlashOffset);
+  flashlightLens.position.copy(flashlight.position);
+  tmpFlashForward.set(0, 0, 1).applyQuaternion(player.quaternion);
+  flashlightTarget.position.copy(flashlight.position).add(tmpFlashForward.multiplyScalar(18));
+  flashlight.intensity = flashlightNight * 5.6;
+  flashlight.distance = 30 + flashlightNight * 24;
+  flashlight.visible = flashlightNight > 0.01;
+  flashlightLens.material.opacity = flashlightNight * 0.85;
+  flashlightLens.visible = flashlight.visible;
+
+  const locomotion = movementController.update(dt, inputController, cameraController.yaw);
+  terrainManager.update(player.position);
+  treeManager.update(player.position, worldTime);
+  animationController.update(dt, locomotion);
+  cameraController.update(dt, locomotion, inputController.state);
+
+  renderer.render(scene, camera);
 }
 
-bindControlButton(leftBtn, moveLeft);
-bindControlButton(rightBtn, moveRight);
-
-function setMenuOpen(open) {
-    if (!sideMenu || !menuOverlay || !menuToggleBtn) return;
-    sideMenu.classList.toggle("is-open", open);
-    menuOverlay.classList.toggle("is-open", open);
-    sideMenu.setAttribute("aria-hidden", open ? "false" : "true");
-    menuToggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
-}
-
-if (menuToggleBtn) {
-    menuToggleBtn.addEventListener("click", () => {
-        const isOpen = sideMenu?.classList.contains("is-open");
-        setMenuOpen(!isOpen);
-    });
-}
-
-if (menuCloseBtn) menuCloseBtn.addEventListener("click", () => setMenuOpen(false));
-if (menuOverlay) menuOverlay.addEventListener("click", () => setMenuOpen(false));
-
-document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") setMenuOpen(false);
-});
-
-function setTouchControlsVisible(visible) {
-    document.body.classList.toggle("controls-hidden", !visible);
-    if (touchControlsToggle) touchControlsToggle.checked = visible;
-}
-
-if (touchControlsToggle) {
-    touchControlsToggle.addEventListener("change", () => {
-        setTouchControlsVisible(touchControlsToggle.checked);
-    });
-    setTouchControlsVisible(touchControlsToggle.checked);
-}
-
-if (soundToggle) {
-    soundEnabled = soundToggle.checked;
-    soundToggle.addEventListener("change", () => {
-        soundEnabled = soundToggle.checked;
-    });
-}
-
-if (musicToggle) {
-    const savedMusic = localStorage.getItem("music_enabled");
-    if (savedMusic !== null) {
-        musicEnabled = savedMusic === "true";
-        musicToggle.checked = musicEnabled;
-    } else {
-        musicEnabled = musicToggle.checked;
-    }
-
-    musicToggle.addEventListener("change", () => {
-        musicEnabled = musicToggle.checked;
-        localStorage.setItem("music_enabled", String(musicEnabled));
-        if (musicEnabled) {
-            startBackgroundMusic();
-        } else {
-            stopBackgroundMusic();
-        }
-    });
-}
-
-if (musicVolumeSlider) {
-    const savedVolume = Number(localStorage.getItem("music_volume"));
-    if (Number.isFinite(savedVolume)) {
-        musicVolume = THREE.MathUtils.clamp(savedVolume, 0, 1);
-    }
-    musicVolumeSlider.value = String(Math.round(musicVolume * 100));
-    setMusicVolume(musicVolume);
-    musicVolumeSlider.addEventListener("input", () => {
-        const normalized = Number(musicVolumeSlider.value) / 100;
-        setMusicVolume(normalized);
-        localStorage.setItem("music_volume", String(musicVolume));
-    });
-}
-
-if (carPolySlider) {
-    carPolySlider.value = String(Math.round(carPolyMultiplier));
-    updateCarPolyLabel();
-    carPolySlider.addEventListener("input", () => {
-        carPolyMultiplier = THREE.MathUtils.clamp(Number(carPolySlider.value), 1, 20);
-        updateCarPolyLabel();
-        rebuildPlayerCar();
-    });
-} else {
-    updateCarPolyLabel();
-}
-
-if (playerNameInput) {
-    const savedName = localStorage.getItem("player_name") || "";
-    if (savedName) playerNameInput.value = savedName.slice(0, 16);
-    playerNameLocked = localStorage.getItem("player_name_locked") === "true" && savedName.trim().length > 0;
-    applyPlayerNameLockState();
-
-    if (!playerNameLocked) {
-        playerNameInput.addEventListener("input", () => {
-            const sanitized = playerNameInput.value.trim().slice(0, 16);
-            playerNameInput.value = sanitized;
-            localStorage.setItem("player_name", sanitized);
-            if (sanitized.length > 0) setNameRequiredMessage(false);
-        });
-    }
-}
-
-loadLeaderboard();
-startLeaderboardRealtime();
-loadMusicPlaylist();
-window.addEventListener("beforeunload", () => {
-    stopLeaderboardRealtime();
-    stopBackgroundMusic();
-});
-
-if (menuRestartBtn) {
-    menuRestartBtn.addEventListener("click", () => {
-        startGame();
-        setMenuOpen(false);
-    });
-}
-
-const graphicsSlider = document.getElementById("graphics-slider");
-if (graphicsSlider) {
-    graphicsSlider.addEventListener("input", () => {
-        if (autoGraphicsMode) return;
-        applyGraphicsQuality(Number(graphicsSlider.value));
-        const w = window.innerWidth;
-        const h = window.innerHeight;
-        const px = renderer.getPixelRatio();
-        if (composer) composer.setSize(w, h);
-        if (ssaoPass) ssaoPass.setSize(w, h);
-        if (bloomPass) bloomPass.setSize(w, h);
-        if (fxaaPass) fxaaPass.material.uniforms['resolution'].value.set(1 / (w * px), 1 / (h * px));
-    });
-}
-
-if (autoGraphicsToggle) {
-    autoGraphicsToggle.checked = autoGraphicsMode;
-    autoGraphicsToggle.addEventListener("change", () => {
-        autoGraphicsMode = autoGraphicsToggle.checked;
-        if (autoGraphicsMode) {
-            applyGraphicsQuality(detectDeviceGraphicsQuality());
-        } else if (graphicsSlider) {
-            applyGraphicsQuality(Number(graphicsSlider.value));
-        }
-        refreshGraphicsControlsState();
-    });
-}
+animate();
 
 window.addEventListener("resize", () => {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    const px = renderer.getPixelRatio();
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
-    if (composer) composer.setSize(w, h);
-    if (ssaoPass) ssaoPass.setSize(w, h);
-    if (bloomPass) bloomPass.setSize(w, h);
-    if (fxaaPass) fxaaPass.material.uniforms['resolution'].value.set(1 / (w * px), 1 / (h * px));
-    if (autoGraphicsMode) {
-        applyGraphicsQuality(detectDeviceGraphicsQuality());
-    } else {
-        applyGraphicsQuality(graphicsQuality);
-    }
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
 });
-
-// Iniciar bucle de renderizado (se mantendrÃ¡ en 'isGameOver=true' hasta pulsar JUGAR)
-if (autoGraphicsMode) {
-    applyGraphicsQuality(detectDeviceGraphicsQuality());
-}
-refreshGraphicsControlsState();
-update();
-

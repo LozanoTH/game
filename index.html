@@ -1,117 +1,34 @@
 ﻿<!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Mini Carrera 3D</title>
-    <link rel="stylesheet" href="style.css">
-    <script type="importmap">
-    {
-      "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
-      }
-    }
-    </script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Personaje 3D Basico</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-    <button id="menu-toggle" aria-label="Abrir menu" aria-expanded="false">
-        <span></span>
-        <span></span>
-        <span></span>
-    </button>
-    <div id="menu-overlay"></div>
-    <aside id="side-menu" aria-hidden="true">
-        <div class="menu-header">
-            <h2>Opciones</h2>
-            <button id="menu-close" aria-label="Cerrar menu">&times;</button>
-        </div>
-        <div class="menu-section">
-            <p>Puntos: <span id="score">0</span></p>
-            <p>Dificultad: <span id="difficulty">1.00x</span></p>
-            <p>Truco: <span id="cheat-status">OFF</span></p>
-            <p>Graficos: <span id="graphics-label">Auto</span></p>
-        </div>
-        <div class="menu-section">
-            <label class="menu-option" for="auto-graphics-toggle">
-                <span>Graficos automaticos</span>
-                <input id="auto-graphics-toggle" type="checkbox" checked>
-            </label>
-            <label class="menu-option menu-slider-wrap" for="graphics-slider">
-                <span>Calidad manual</span>
-                <input id="graphics-slider" type="range" min="20" max="100" value="20" step="1">
-            </label>
-            <label class="menu-option menu-slider-wrap" for="car-poly-slider">
-                <span>Poligonos carro: <strong id="car-poly-label">x20</strong></span>
-                <input id="car-poly-slider" type="range" min="1" max="20" value="20" step="1">
-            </label>
-            <label class="menu-option" for="sound-toggle">
-                <span>Sonido de derrape</span>
-                <input id="sound-toggle" type="checkbox" checked>
-            </label>
-            <label class="menu-option" for="music-toggle">
-                <span>Musica de fondo</span>
-                <input id="music-toggle" type="checkbox" checked>
-            </label>
-            <label class="menu-option menu-slider-wrap" for="music-volume-slider">
-                <span>Volumen musica</span>
-                <input id="music-volume-slider" type="range" min="0" max="100" value="28" step="1">
-            </label>
-            <label class="menu-option" for="touch-controls-toggle">
-                <span>Controles tactiles</span>
-                <input id="touch-controls-toggle" type="checkbox" checked>
-            </label>
-            <button id="menu-restart-btn" type="button">Reiniciar partida</button>
-        </div>
-        <div class="menu-section">
-            <label class="menu-option menu-text-wrap" for="player-name">
-                <span>Nombre</span>
-                <input id="player-name" type="text" maxlength="16" placeholder="Jugador">
-            </label>
-            <p class="leaderboard-title">Top distancia (metros)</p>
-            <div id="leaderboard-status">Cargando tabla...</div>
-            <table id="leaderboard-table">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Nombre</th>
-                        <th>Distancia</th>
-                    </tr>
-                </thead>
-                <tbody id="leaderboard-body"></tbody>
-            </table>
-        </div>
-    </aside>
+  <div id="hud">
+    <h1>Demo 3D</h1>
+    <p>PC: WASD + Espacio | Android: Joystick izq/der + salto/correr</p>
+  </div>
 
-    <div id="start-screen">
-        <h1 style="color:white; font-family:Arial, sans-serif; text-shadow:0 0 10px #ff0000; font-size:40px; margin:0;">MINI CARRERA 3D</h1>
-        <p style="color:#aaa; font-family:Arial, sans-serif; margin-bottom:30px;">Esquiva los obstaculos</p>
-        <p id="name-required-msg">Ingresa un usuario en el menu para iniciar.</p>
-        <button id="start-btn">JUGAR</button>
+  <div id="mobile-controls" aria-hidden="true">
+    <div class="stick-zone left">
+      <div id="move-stick" class="stick">
+        <div id="move-thumb" class="thumb"></div>
+      </div>
     </div>
+    <div class="stick-zone right">
+      <div id="look-stick" class="stick">
+        <div id="look-thumb" class="thumb"></div>
+      </div>
+      <div class="mobile-buttons">
+        <button id="jump-btn" class="mobile-btn" type="button">SALTAR</button>
+        <button id="sprint-btn" class="mobile-btn" type="button">CORRER</button>
+      </div>
+    </div>
+  </div>
 
-    <div id="game-over-screen" style="display:none;">
-        <h1 style="color:#ff3333; font-family:Arial, sans-serif; text-shadow:0 0 10px #000; font-size:50px; margin:0;">GAME OVER</h1>
-        <p style="color:white; font-family:Arial, sans-serif; font-size:20px;">Puntuacion Final: <span id="final-score">0</span></p>
-        <button id="restart-btn" class="btn-primary">REINTENTAR</button>
-    </div>
-
-    <div id="controls">
-        <div class="btn" id="left">&#9664;</div>
-        <div class="btn" id="right">&#9654;</div>
-    </div>
-    <aside id="hud-leaderboard">
-        <p class="leaderboard-title">Clasificacion en vivo</p>
-        <table id="hud-leaderboard-table">
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>Nombre</th>
-                    <th>Distancia</th>
-                </tr>
-            </thead>
-            <tbody id="hud-leaderboard-body"></tbody>
-        </table>
-    </aside>
-    <script type="module" src="game.js"></script>
+  <script type="module" src="game.js"></script>
 </body>
 </html>
